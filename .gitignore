@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Database files (local SQLite)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Large Model files, weights, and caches (important to avoid pushing heavy 2.2GB files to Git)
+models/
+/models/
+
+# Articles and retrieved PDFs
+articles/
+/articles/
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

@@ -1,0 +1,36 @@
+# =====================================================================
+# NAIJABUDDY DOCKER IGNORE CONFIGURATION
+# Best-practice MLOps container footprint optimization
+# =====================================================================
+
+# Version Control
+.git
+.gitignore
+
+# Python caching & environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+ENV/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Operating System garbage
+.DS_Store
+Thumbs.db
+
+# Incomplete Hugging Face download cache
+# We only want to copy the finalized sentence_transformers and .gguf files
+models/.cache/
+models/hf_home/xet/
+
+# Development / Scratch scripts (keeps image footprint lightweight)
+verify_api.py
+verify_concept.py
+articles/
+BCT Hack Brief.pdf
+arxiv_results.json
