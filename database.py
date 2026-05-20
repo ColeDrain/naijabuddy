@@ -11,7 +11,6 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
     except Exception:
         pass
@@ -19,7 +18,14 @@ def get_connection():
 
 def initialize_db():
     """Creates the SQLite tables if they do not exist."""
-    conn = get_connection()
+    # Connect directly to configure WAL mode persistently on the database file
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
     # 1. Items table (Yelp restaurants, Amazon movies/electronics, Goodreads books)
