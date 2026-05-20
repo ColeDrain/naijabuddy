@@ -44,11 +44,14 @@ graph TD
 
 ### 1. Data Layer: The "Naija-Enriched" Hybrid Catalog
 We will build a **Hybrid Local SQLite Catalog** containing:
-* **The Foreign Base**: Selected subsets of items/reviews from the three datasets.
-* **The Nigerian Seed (Data Augmentation)**: We will write a Python script to seed the catalog with 150+ highly recognizable local items:
-  * **Yelp**: Famous Lagos/Abuja restaurants (e.g., *The Place, Yellow Chilli, Shiro, Mega Chicken*) and local delicacies (Jollof, Suya, Pepper Soup).
-  * **Amazon**: Iconic Nollywood films (e.g., *The Wedding Party, King of Boys, Aníkúlápó*) and electronics.
-  * **Goodreads**: Masterpieces by Nigerian/African authors (e.g., Chinua Achebe, Chimamanda Ngozi Adichie, Wole Soyinka, Ben Okri).
+* **The Foreign Base**: Relational, fully public datasets streamed and joined dynamically using **DuckDB**:
+  * **Yelp (Food & Spots)**: `yashraizada/yelp-open-dataset-reviews` joined with `yashraizada/yelp-open-dataset-business` on `business_id` (delivering real restaurant names like *The Grog Grill* and *Ruth's Chris Steak House* with real user reviews).
+  * **Goodreads (Books)**: `vngclinh/goodreads-reviews` joined with `Eitanli/goodreads` on extracted book URLs (delivering real book titles like *Invisible Man* and *Pride and Prejudice* with real user reviews).
+  * **Amazon (Products)**: Public ClickHouse S3 parquet of the 2015 Amazon Reviews (delivering real product categories, titles, ratings, and reviews).
+* **The Nigerian Seed (Data Augmentation)**: A curated local catalog of 150+ highly recognizable Nigerian items:
+  * **Yelp**: Famous Lagos/Abuja spots (e.g., *The Place, Yellow Chilli, Shiro, Mega Chicken*) and delicacies (Jollof, Suya, Pepper Soup).
+  * **Amazon**: Iconic Nollywood films (e.g., *The Wedding Party, King of Boys, Aníkúlápó*).
+  * **Goodreads**: Masterpieces by Nigerian/African authors (e.g., Chinua Achebe, Chimamanda Ngozi Adichie, Wole Soyinka).
 
 ### B. Output Calibration (The Mathematical Defense)
 LLMs exhibit inherent "positivity bias" and volatility when predicting raw numerical ratings. To protect our RMSE score, we implement a programmatic **Calibration Layer**:
@@ -150,8 +153,11 @@ Instead of static forms, the frontend will be built as a premium, responsive **A
 
 We will organize our repository as follows:
 
-### [NEW] [data_enricher.py](file:///Users/indicina/Projects/dsn-bct-hackathon/data_enricher.py)
-A utility script to populate our SQLite database with a combination of the foreign datasets and our custom Nigerian seed data (local restaurants, Nollywood movies, and African literature).
+### [NEW] [fetch_real_data.py](file:///Users/indicina/Projects/dsn-bct-hackathon/fetch_real_data.py)
+A Python utility that uses DuckDB to stream, filter, and join the final Yelp, Amazon, and Goodreads datasets from public endpoints. It resolves entities, matches schemas, and saves the foreign baseline datasets into `naijabuddy.db`.
+
+### [MODIFY] [data_enricher.py](file:///Users/indicina/Projects/dsn-bct-hackathon/data_enricher.py)
+Updated to invoke `fetch_real_data.py` to seed real-world baseline items and user interaction matrices, generate dense embeddings using `BAAI/bge-small-en-v1.5`, and overlay the localized Nigerian seed catalog.
 
 ### [NEW] [database.py](file:///Users/indicina/Projects/dsn-bct-hackathon/database.py)
 Handles connections to our local SQLite database and performs the fast, robust Stage-1 (Recall) semantic search using local **`BAAI/bge-small-en-v1.5`** dense embeddings (130MB, MTEB: 58.21) with an exact cosine similarity match in NumPy (executing in under 1ms).
