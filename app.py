@@ -53,6 +53,7 @@ class CreateUserRequest(BaseModel):
 @app.post("/api/users")
 def create_user(req: CreateUserRequest):
     """Registers a new custom user, generates BGE-small embeddings, and saves to SQLite."""
+    conn = None
     try:
         from sentence_transformers import SentenceTransformer
         embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
@@ -71,58 +72,66 @@ def create_user(req: CreateUserRequest):
         
         cursor.execute("SELECT id, name, persona, user_mean_rating FROM users WHERE name = ?", (req.name,))
         row = cursor.fetchone()
-        conn.close()
         
         return dict(row)
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="A persona with this name already exists.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create persona: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
 
 @app.get("/api/users")
 def get_users():
     """Retrieves all seeded user personas and their profile descriptions."""
-    conn = database.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, persona, user_mean_rating FROM users")
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [
-        {
-            "id": row["id"],
-            "name": row["name"],
-            "persona": row["persona"],
-            "user_mean_rating": row["user_mean_rating"]
-        }
-        for row in rows
-    ]
+    conn = None
+    try:
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, persona, user_mean_rating FROM users")
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "persona": row["persona"],
+                "user_mean_rating": row["user_mean_rating"]
+            }
+            for row in rows
+        ]
+    finally:
+        if conn:
+            conn.close()
 
 @app.get("/api/items")
 def get_items(domain: str = None):
     """Retrieves catalog items, optionally filtered by domain."""
-    conn = database.get_connection()
-    cursor = conn.cursor()
-    
-    if domain:
-        cursor.execute("SELECT id, name, category, domain, description, average_rating FROM items WHERE domain = ?", (domain,))
-    else:
-        cursor.execute("SELECT id, name, category, domain, description, average_rating FROM items")
+    conn = None
+    try:
+        conn = database.get_connection()
+        cursor = conn.cursor()
         
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [
-        {
-            "id": row["id"],
-            "name": row["name"],
-            "category": row["category"],
-            "domain": row["domain"],
-            "description": row["description"],
-            "average_rating": row["average_rating"]
-        }
-        for row in rows
-    ]
+        if domain:
+            cursor.execute("SELECT id, name, category, domain, description, average_rating FROM items WHERE domain = ?", (domain,))
+        else:
+            cursor.execute("SELECT id, name, category, domain, description, average_rating FROM items")
+            
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "category": row["category"],
+                "domain": row["domain"],
+                "description": row["description"],
+                "average_rating": row["average_rating"]
+            }
+            for row in rows
+        ]
+    finally:
+        if conn:
+            conn.close()
 
 @app.post("/api/simulate")
 def simulate_review(req: SimulateRequest):
