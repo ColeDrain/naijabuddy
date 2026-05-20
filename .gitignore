@@ -26,6 +26,10 @@ models/
 articles/
 /articles/
 
+# Bruno Local API collection (ignored as requested by the user)
+bruno/
+/bruno/
+
 # OS-specific files
 .DS_Store
 .DS_Store?
