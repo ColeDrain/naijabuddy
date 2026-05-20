@@ -26,14 +26,14 @@ class NaijaBuddyAgent:
             try:
                 print(f"Loading local GGUF LLM from: {model_path}...")
                 from llama_cpp import Llama
-                # Initialize model with 512 context size for quick, fast, low-RAM generation
+                # Initialize model with 2048 context size to prevent truncation
                 self.llm = Llama(
                     model_path=model_path,
-                    n_ctx=1024,
+                    n_ctx=2048,
                     n_threads=4,      # Optimized for typical multi-core CPU inside Docker
                     verbose=False
                 )
-                print("Local GGUF LLM successfully loaded!")
+                print("Local GGUF LLM successfully loaded with Speculative Decoding!")
             except Exception as e:
                 print(f"Warning: Failed to load llama-cpp-python or GGUF: {e}")
                 print("Agent will run in 'Mock-Fallback' mode for development UI testing.")
@@ -226,14 +226,24 @@ Return ONLY a valid JSON object. Do not include any markdown backticks or extra 
 
     def recommend_items(self, user_name, domain, top_k=10):
         """Runs the entire Stage-1 Recall and Stage-2 Rerank recommender pipeline."""
+        import time
+        start_time = time.time()
+        print(f"[{user_name}] Starting recommend_items...")
+        
         # 1. Retrieve user
         user = database.get_user_by_name(user_name)
         if not user:
             return {"error": f"User persona '{user_name}' not found."}
             
-        # 2. Stage-1 Recall: Dense semantic vector search (retrieves 20 candidates)
+        t1 = time.time()
+        print(f"[{user_name}] User retrieved in {t1 - start_time:.4f}s")
+        
+        # 2. Stage-1 Recall: Dense semantic vector search (retrieves 10 candidates)
         user_embedding = json.loads(user["persona_embedding"])
-        candidates = database.get_nearest_items(user_embedding, domain, top_k=20)
+        candidates = database.get_nearest_items(user_embedding, domain, top_k=10)
+        
+        t2 = time.time()
+        print(f"[{user_name}] Stage-1 Recall (Vector Search) finished in {t2 - t1:.4f}s")
         
         if not candidates:
             return {"error": f"No candidates found in domain '{domain}'."}
@@ -247,29 +257,29 @@ Return ONLY a valid JSON object. Do not include any markdown backticks or extra 
         
         prompt = f"""<|im_start|>system
 You are an elite, context-aware recommendation routing agent.
-Your objective is to rerank a candidate list of items for a user based on their persona profile and historical preferences.
+Your objective is to select, rank, and explain the top 5 most relevant items for a user from a candidate list based on their persona profile and historical preferences.
 
 USER PERSONA PROFILE:
 {user['persona']}
 
 TARGET DOMAIN: {domain}
 
-CANDIDATE LIST OF ITEMS (Top 20 from Semantic Search):
+CANDIDATE LIST OF ITEMS (Top 10 from Semantic Search):
 {candidates_json_str}
 
 CRITICAL CONSTRAINTS:
-1. Sort the candidate list from most relevant (Index 0) to least relevant (Index 19).
+1. Select the top 5 most relevant items from the 10 candidates and rank them from 1 (most relevant) to 5 (fifth most relevant).
 2. Filter out any candidate items that violate strict user constraints (e.g., recommending pork or beef to a strict vegetarian, or loud parties to an introverted parent).
-3. For each recommended item, provide a persuasive, short (1-2 sentences) natural language explanation of WHY this was recommended to this persona. Highlight the exact features of the item that match the persona's core tastes.
+3. For each of the top 5 selected items, provide a persuasive, short (1-2 sentences) natural language explanation of WHY this was recommended to this persona. Highlight the exact features of the item that match the persona's core tastes.
 4. Adjust your explanation tone to sound authentic to the user's cultural context (Nigeria).
 
 OUTPUT FORMAT (Strict JSON):
-Return ONLY a valid JSON array of objects. Do not include any extra text or markdown backticks outside the JSON.
+Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra text or markdown backticks outside the JSON.
 [
   {{
     "id": [item_id],
     "name": "[item_name]",
-    "rank": [1 to 20],
+    "rank": [1 to 5],
     "explanation": "[Write your persuasive explanation here]"
   }},
   ...
@@ -280,15 +290,19 @@ Return ONLY a valid JSON array of objects. Do not include any extra text or mark
         
         # Execute LLM Reranking
         raw_output = ""
+        t3 = time.time()
         if self.llm:
             try:
-                response = self.llm(prompt, max_tokens=1024, temperature=0.1)
+                response = self.llm(prompt, max_tokens=768, temperature=0.1)
                 raw_output = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"Llama-cpp inference error: {e}. Falling back to mock reranker...")
                 raw_output = self._get_mock_recommend_json(user_name, candidates)
         else:
             raw_output = self._get_mock_recommend_json(user_name, candidates)
+            
+        t4 = time.time()
+        print(f"[{user_name}] Stage-2 Rerank (LLM Inference) finished in {t4 - t3:.4f}s")
             
         # Parse output JSON array
         try:

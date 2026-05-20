@@ -29,15 +29,20 @@ app.add_middleware(
 # The agent will attempt to load the pre-cached GGUF model or run in fallback-development mode
 agent = NaijaBuddyAgent()
 
+import threading
+
 # 4. Lazy-load and cache the BGE-Small embedding model globally to prevent slow 12-second disk loads on every request
 EMBEDDER = None
+EMBEDDER_LOCK = threading.Lock()
 
 def get_embedder():
     global EMBEDDER
     if EMBEDDER is None:
-        from sentence_transformers import SentenceTransformer
-        print("Loading global BGE-Small embedding model for API requests...")
-        EMBEDDER = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        with EMBEDDER_LOCK:
+            if EMBEDDER is None:
+                from sentence_transformers import SentenceTransformer
+                print("Loading global BGE-Small embedding model for API requests...")
+                EMBEDDER = SentenceTransformer("BAAI/bge-small-en-v1.5")
     return EMBEDDER
 
 # =====================================================================
@@ -70,15 +75,25 @@ def create_user(req: CreateUserRequest):
         embedding = embedder.encode(req.persona).tolist()
         
         conn = database.get_connection()
+        conn.isolation_level = "IMMEDIATE"  # Upgrade to write lock instantly, preventing deadlocks
         cursor = conn.cursor()
         
-        # Save to database (default historical average 3.5 for a neutral starting baseline)
-        cursor.execute("""
-            INSERT INTO users (name, persona, user_mean_rating, persona_embedding)
-            VALUES (?, ?, ?, ?)
-        """, (req.name, req.persona, 3.5, json.dumps(embedding)))
-        
-        conn.commit()
+        # Save to database with automatic retry for aggressive concurrent GUI clients
+        import time
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                cursor.execute("""
+                    INSERT INTO users (name, persona, user_mean_rating, persona_embedding)
+                    VALUES (?, ?, ?, ?)
+                """, (req.name, req.persona, 3.5, json.dumps(embedding)))
+                conn.commit()
+                break
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < max_retries - 1:
+                    time.sleep(0.2 * (2 ** attempt))
+                    continue
+                raise
         
         cursor.execute("SELECT id, name, persona, user_mean_rating FROM users WHERE name = ?", (req.name,))
         row = cursor.fetchone()
