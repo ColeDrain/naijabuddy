@@ -29,6 +29,17 @@ app.add_middleware(
 # The agent will attempt to load the pre-cached GGUF model or run in fallback-development mode
 agent = NaijaBuddyAgent()
 
+# 4. Lazy-load and cache the BGE-Small embedding model globally to prevent slow 12-second disk loads on every request
+EMBEDDER = None
+
+def get_embedder():
+    global EMBEDDER
+    if EMBEDDER is None:
+        from sentence_transformers import SentenceTransformer
+        print("Loading global BGE-Small embedding model for API requests...")
+        EMBEDDER = SentenceTransformer("BAAI/bge-small-en-v1.5")
+    return EMBEDDER
+
 # =====================================================================
 # REQUEST SCHEMAS (Pydantic Models)
 # =====================================================================
@@ -55,8 +66,7 @@ def create_user(req: CreateUserRequest):
     """Registers a new custom user, generates BGE-small embeddings, and saves to SQLite."""
     conn = None
     try:
-        from sentence_transformers import SentenceTransformer
-        embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        embedder = get_embedder()
         embedding = embedder.encode(req.persona).tolist()
         
         conn = database.get_connection()
@@ -77,6 +87,8 @@ def create_user(req: CreateUserRequest):
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="A persona with this name already exists.")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to create persona: {str(e)}")
     finally:
         if conn:
