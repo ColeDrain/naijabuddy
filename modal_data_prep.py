@@ -2,18 +2,20 @@
 Dense-dataset preparation on Modal — the cloud equivalent of
 colab_data_prep.ipynb. Streams Yelp / Goodreads / Amazon reviews from the
 HuggingFace parquet mirrors, extracts a dense bipartite k-core per domain,
-caps each to its `limit_users` densest users, and writes the three
-data/*_dense.csv files locally.
+caps each to its `limit_users` densest users, writes data/*_dense.csv.
 
     modal run modal_data_prep.py --limit-users 2000
 
-Differences from the original notebook:
-  * parquet shard URLs are resolved via the dataset-viewer API for *all*
-    domains (the notebook hardcoded a stale path for Yelp/Goodreads that now
-    404s);
-  * it reads across *all* shards with a large row LIMIT — one shard only
-    yielded ~340 dense users, far short of a 2k target.
+Notes:
+  * parquet shard URLs are resolved via the dataset-viewer API (the notebook
+    hardcoded a now-dead path);
+  * HF now requires an auth token to download the parquet files — the token
+    is read locally and forwarded to the Modal container as a DuckDB http
+    secret (never logged);
+  * reads across all shards with a large LIMIT — one shard yields only
+    ~340 dense users, far short of a 2k target.
 """
+import os
 import modal
 
 app = modal.App("naijabuddy-data-prep")
@@ -22,13 +24,31 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "duckdb==1.1.3", "pandas", "requests", "pyarrow"
 )
 
-# How many raw review rows to stream per domain before densifying. A 3-core of
-# ~2M rows comfortably clears 2k dense users for every domain.
 RAW_LIMIT = 2_000_000
 
 
+def _hf_token():
+    """Find the local HuggingFace token without printing it."""
+    for env in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN"):
+        v = os.environ.get(env)
+        if v and v.strip():
+            return v.strip()
+    hf_home = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
+    for p in (os.path.join(hf_home, "token"),
+              os.path.expanduser("~/.cache/huggingface/token"),
+              os.path.expanduser("~/.huggingface/token")):
+        try:
+            if os.path.exists(p):
+                t = open(p).read().strip()
+                if t:
+                    return t
+        except Exception:
+            pass
+    return None
+
+
 @app.function(image=image, timeout=3600, cpu=4.0, memory=32768)
-def prepare_data(limit_users: int = 2000):
+def prepare_data(limit_users: int = 2000, hf_token: str = ""):
     """Stream, densify and pack the three dense CSVs; return a zip of them."""
     import duckdb, time, io, zipfile
     import requests
@@ -46,7 +66,6 @@ def prepare_data(limit_users: int = 2000):
         return [f["url"] for f in r.json()["parquet_files"]]
 
     def plist(urls):
-        """Render a python list of URLs as a DuckDB read_parquet([...]) arg."""
         return "[" + ",".join(f"'{u}'" for u in urls) + "]"
 
     def stream_query(query, label):
@@ -56,8 +75,18 @@ def prepare_data(limit_users: int = 2000):
         for attempt in range(1, STREAM_RETRIES + 1):
             con = duckdb.connect()
             try:
+                con.execute("INSTALL httpfs; LOAD httpfs;")
                 con.execute("SET http_retries=3;")
                 con.execute("SET http_timeout=120000;")
+                # HF requires auth to download parquet files — attach the token
+                # as an http secret scoped to huggingface.co.
+                if hf_token:
+                    con.execute(
+                        "CREATE OR REPLACE SECRET hf_auth (TYPE http, "
+                        "SCOPE 'https://huggingface.co', "
+                        "EXTRA_HTTP_HEADERS MAP "
+                        f"{{'Authorization': 'Bearer {hf_token}'}})"
+                    )
                 df = con.execute(query).fetchdf()
                 con.close()
                 print(f"  [{label}] streamed {len(df)} rows", flush=True)
@@ -75,7 +104,6 @@ def prepare_data(limit_users: int = 2000):
         raise last_err
 
     def true_kcore(df, k):
-        # Iterative k-core to a fixed point.
         while len(df):
             uc = df["user_id"].value_counts()
             ic = df["item_id"].value_counts()
@@ -108,7 +136,6 @@ def prepare_data(limit_users: int = 2000):
               flush=True)
         return core
 
-    # --- Resolve every dataset's parquet shards via the dataset-viewer API ---
     print("Resolving parquet shard URLs ...", flush=True)
     yelp_review = hf_parquet_urls("yashraizada/yelp-open-dataset-reviews")
     yelp_biz = hf_parquet_urls("yashraizada/yelp-open-dataset-business")
@@ -185,14 +212,19 @@ def prepare_data(limit_users: int = 2000):
 
 @app.local_entrypoint()
 def main(limit_users: int = 2000):
-    import io, os, zipfile
+    import io, zipfile
+
+    token = _hf_token()
+    print(f"HF token: {'found' if token else 'NOT FOUND'}")
+    if not token:
+        raise SystemExit("No HF token found locally — run `hf auth login` first.")
 
     print(f"Running dense-dataset prep on Modal (limit_users={limit_users}) ...")
-    zip_bytes = prepare_data.remote(limit_users)
+    zip_bytes = prepare_data.remote(limit_users, token)
 
     os.makedirs("data", exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        z.extractall(".")  # writes data/{yelp,goodreads,amazon}_dense.csv
+        z.extractall(".")
         names = z.namelist()
     print("\n" + "=" * 60)
     print("Dense CSVs written locally:")
