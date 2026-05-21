@@ -23,10 +23,18 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Incomplete Hugging Face download cache
-# We only want to copy the finalized sentence_transformers and .gguf files
-models/.cache/
-models/hf_home/xet/
+# Local model weights — the build re-downloads them inside downloader.py
+models/
+
+# Local SQLite database — the build re-seeds it inside data_enricher.py
+naijabuddy.db
+naijabuddy.db-shm
+naijabuddy.db-wal
+
+# Scratch workspace, eval artifact cache, logs — not needed in the image
+scratch/
+eval_artifacts/
+*.log
 
 # Development / Scratch scripts (keeps image footprint lightweight)
 verify_api.py
