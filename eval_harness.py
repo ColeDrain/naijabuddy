@@ -748,6 +748,41 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
 # PER-SEED EVALUATION
 # =====================================================================
 
+def build_rag_context(domain, train_for_user, target_item, item_info, item_vec, k=4):
+    """
+    Retrieval-augmented user context (Tier 2). Instead of a static persona, give
+    the LLM the user's OWN past ratings of the k items most similar to the
+    target — concrete in-context evidence of their taste and rating scale.
+    `item_vec` maps item id -> unit-normalised content embedding.
+    """
+    import numpy as np
+    tv = item_vec.get(target_item)
+    if tv is None:
+        return f"A real {domain} user."
+    scored = []
+    for r in train_for_user:
+        v = item_vec.get(r["item"])
+        if v is not None:
+            scored.append((float(np.dot(tv, v)), r))
+    scored.sort(key=lambda x: -x[0])
+    lines = []
+    for _, r in scored[:k]:
+        info = item_info.get(r["item"], {})
+        review = (r["review"] or "").strip().replace("\n", " ")
+        if len(review) > 160:
+            review = review[:160] + "..."
+        entry = (f"- {info.get('name') or r['item']} "
+                 f"({info.get('category') or domain}): rated {r['rating']}/5")
+        if review:
+            entry += f' — "{review}"'
+        lines.append(entry)
+    if not lines:
+        return f"A real {domain} user with no prior ratings."
+    return ("This user's own past ratings of the items most similar to the one "
+            "being reviewed — direct evidence of their taste and rating scale:\n"
+            + "\n".join(lines))
+
+
 def run_eval(seed, args, embedder, llm, cache):
     """Run the full evaluation for a single leave-one-out split (one seed)."""
     results = {}
@@ -768,6 +803,18 @@ def run_eval(seed, args, embedder, llm, cache):
                 return synthesize_persona(llm, _d, train_for_user, _ii, cache,
                                           {"domain": _d, "user": user, "stage": "warm"})
             return build_persona(_d, train_for_user, _ii)
+
+        # RAG mode (Tier 2): embed item content so the warm loop can retrieve,
+        # per held-out pair, the user's own ratings of the most similar items.
+        item_vec = None
+        if args.persona_mode == "rag":
+            import numpy as np
+            iids = list(item_info.keys())
+            M = np.asarray(embedder.encode([item_info[i]["clean_text"] for i in iids],
+                                           batch_size=64, show_progress_bar=False),
+                           dtype=np.float32)
+            M /= (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
+            item_vec = {iid: M[j] for j, iid in enumerate(iids)}
 
         # ---- RMSE V0 / V1 over ALL held-out pairs --------------------------
         global_mean = sum(r["rating"] for r in train_rows) / len(train_rows)
@@ -804,7 +851,11 @@ def run_eval(seed, args, embedder, llm, cache):
                 user = held["user"]
                 if held["item"] not in item_info:
                     continue
-                persona = persona_fn(user, train_by_user[user])
+                if args.persona_mode == "rag":
+                    persona = build_rag_context(domain, train_by_user[user],
+                                                held["item"], item_info, item_vec)
+                else:
+                    persona = persona_fn(user, train_by_user[user])
                 raw, review = llm_score(llm, persona, item_info[held["item"]], cache,
                                         {"domain": domain, "user": user,
                                          "item": held["item"], "seed": seed,
@@ -937,8 +988,9 @@ def main():
                     help="users per domain per k for --cold-start (default 100)")
     ap.add_argument("--bertscore", action="store_true",
                     help="add semantic review-similarity (BGE; true BERTScore if installed)")
-    ap.add_argument("--persona-mode", choices=["template", "synth"], default="template",
-                    help="template (deterministic, default) or synth (LLM-synthesised)")
+    ap.add_argument("--persona-mode", choices=["template", "synth", "rag"], default="template",
+                    help="template (deterministic), synth (LLM-synthesised prose), or "
+                         "rag (retrieval-augmented: the user's own ratings of similar items)")
     ap.add_argument("--no-cache", action="store_true",
                     help="disable the LLM artifact cache (always re-generate)")
     ap.add_argument("--candidate-pool", type=int, default=None,
