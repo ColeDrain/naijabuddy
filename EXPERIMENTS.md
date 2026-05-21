@@ -17,6 +17,7 @@ order **Yelp / Goodreads / Amazon**. All dates 2026.
 | 5 | Candidate-pool retrieval (101/20, uniform + pop-weighted) | 05-21 | pool-101 pop-wtd NDCG@10 0.337 / 0.248 / 0.301 | matched-protocol numbers for paper §4.4 |
 | 6 | Multi-seed (seeds 42, 1, 7) — **CURRENT CANONICAL** | 05-21 | RMSE V2 0.958±.03 / 0.937±.03 / 0.784±.01 | V2>V1 real on Yelp/Goodreads, ≈0 on Amazon |
 | 7 | Data study: item-mean + variance buckets | 05-21 | user+item blend 0.949 on Yelp — beats LLM V2 | → motivates 3-term calibration |
+| 8 | 3-term calibration measurement (item-mean) | 05-21 | V3 vs V2: −5.0% Yelp, −1.3% GR, −1.7% AMZ; LLM weight ≈ 0 | item-bias is the win; LLM redundant warm |
 
 ## Detail
 
@@ -79,11 +80,21 @@ high 1.21; Amazon: 0.57 / 0.76 / 1.12. Rating prediction is two populations:
 solved for predictable users, hard for variable ones.
 Finding: the item-bias term is untapped → 3-term calibration (planned T1a).
 
+### 8 — 3-term calibration measurement (Tier 1a)
+`analysis/measure_calib3.py` — sweeps `y = a·LLM + b·μ_user + c·μ_item` on the
+cached warm LLM ratings (seeds 42/1/7, zero new GPU). V3 vs the deployed 2-term
+V2: Yelp 0.958→0.910 (−5.0%), Goodreads 0.938→0.926 (−1.3%), Amazon
+0.784→0.770 (−1.7%). Optimal weights: LLM **a ≈ 0** on every domain;
+user/item b,c ≈ 0.52/0.47 (Yelp), 0.75/0.22 (Goodreads), 0.78/0.22 (Amazon).
+Finding: warm rating prediction is best solved by a user-bias + item-bias
+model; the LLM's numeric rating is redundant warm — its value is entirely in
+cold-start (§4.5).
+
 ## Planned / pending
 
 | ID | Experiment | Status |
 |---|---|---|
-| T1a | 3-term calibration `α·LLM + β·μ_user + γ·μ_item` (re-eval free from cache) | not started |
+| T1a | 3-term calibration `α·LLM + β·μ_user + γ·μ_item` | ✅ shipped — 3-term anchor in agent.py + paper §4.2 |
 | T1b | Variance-bucketed V2-vs-V1 analysis (post-hoc from cache) | not started |
 | T2 | Retrieval-augmented prompting — ablation vs static persona | not started |
 

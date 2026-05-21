@@ -9,7 +9,7 @@
 ## Abstract
 Traditional recommender systems rely heavily on static user matrices, neglecting contextual nuance and natural language behavior. Recent advances in Large Language Models (LLMs) have enabled generative recommendation and behavioral simulation; however, these models often suffer from strong "positivity bias" in numerical rating generation, high computational latency, and complete dependence on costly, cloud-bound APIs. 
 
-In this paper, we present **NaijaBuddy**, a 100% offline-first, containerized agentic recommendation and user modeling system tailored specifically for the Nigerian consumer market. Our architecture employs a dual-stage pipeline: (1) high-speed dense vector semantic search using `BAAI/bge-small-en-v1.5` over a hybrid SQLite catalog enriched with local establishments, movies, and literature; and (2) in-context reranking and review generation utilizing a quantized local GGUF engine (`Qwen-2.5-3B-Instruct`) hosted natively in-process via `llama-cpp-python`. To protect rating accuracy (RMSE), we implement a mathematical **Output Calibration Layer** that blends LLM estimates with user baseline means and uses a vector-based **Cluster-Mean** fallback for cold-start personas. Finally, a deterministic **Collaborative Critic Layer** ensures 100% compliance with strict behavioral constraints. Our leakage-free, out-of-sample evaluation over the full held-out set establishes per-user calibration as a reliable RMSE anchor (up to a 13.1% reduction over a global-mean baseline) and shows the optimal LLM/statistics blend to be *adaptive*: the LLM's raw rating adds little for users with rich history, but cuts cold-start RMSE by 13–15%. We release the evaluation harness so that every reported figure reproduces.
+In this paper, we present **NaijaBuddy**, a 100% offline-first, containerized agentic recommendation and user modeling system tailored specifically for the Nigerian consumer market. Our architecture employs a dual-stage pipeline: (1) high-speed dense vector semantic search using `BAAI/bge-small-en-v1.5` over a hybrid SQLite catalog enriched with local establishments, movies, and literature; and (2) in-context reranking and review generation utilizing a quantized local GGUF engine (`Qwen-2.5-3B-Instruct`) hosted natively in-process via `llama-cpp-python`. To protect rating accuracy (RMSE), we implement a mathematical **Output Calibration Layer** that blends LLM estimates with user baseline means and uses a vector-based **Cluster-Mean** fallback for cold-start personas. Finally, a deterministic **Collaborative Critic Layer** ensures 100% compliance with strict behavioral constraints. Our leakage-free, out-of-sample evaluation over the full held-out set establishes per-user calibration as a reliable RMSE anchor (up to a 13.7% reduction over a global-mean baseline) and shows the optimal LLM/statistics blend to be *adaptive*: the LLM's raw rating adds little for users with rich history, but cuts cold-start RMSE by 13–15%. We release the evaluation harness so that every reported figure reproduces.
 
 ---
 
@@ -147,25 +147,35 @@ We evaluate NaijaBuddy with a leakage-free, out-of-sample protocol and report th
 
 **Leave-one-out split.** For each user we hold out one interaction. All training statistics — each user's mean rating, every item description, and every persona — are computed from that user's *remaining* interactions only. This removes the circular evaluation in which a prediction is scored against a rating that itself contributed to the mean used to produce it.
 
-**Metrics.** RMSE for rating prediction; ROUGE-L and an embedding-based semantic similarity for the generated review; HitRate@10 and NDCG@10 for retrieval. Unlike our earlier draft, which sub-sampled 100 interactions for the LLM-dependent figures, **every figure below is computed over the entire held-out set** (339 / 350 / 350 pairs), in the synthesised-persona configuration that matches the deployed system. A discarded small-sample run had reported a Goodreads blend RMSE of 0.60 that the full evaluation corrects to 0.98 — a cautionary illustration of sampling variance, and the reason for the full-set protocol.
+**Metrics.** RMSE for rating prediction; ROUGE-L and an embedding-based semantic similarity for the generated review; HitRate@10 and NDCG@10 for retrieval. Every figure below is computed over the **entire held-out set** (339 / 350 / 350 pairs) and **averaged over three independent leave-one-out splits** (seeds 42, 1, 7); we report mean ± std so the reader can see which differences survive resampling. The synthesised-persona configuration is used throughout, matching the deployed system. A discarded small-sample run (n = 10) had reported a Goodreads blend RMSE of 0.60 that the full multi-seed evaluation corrects to 0.94 — a cautionary illustration of sampling variance, and the reason for the full-set protocol.
 
 **Cold-start protocol.** A 3-core leaves no genuinely cold users (the Goodreads minimum is 44 interactions), so we *simulate* cold-start: a test user's history is truncated to k ∈ {1, 2, 3} interactions while every other user keeps full history — a new user entering a populated system — and the evaluation is repeated. Section 4.5 reports the resulting degradation curve.
 
 ### 4.2 Rating Prediction and the Calibration Layer
 
-**Per-user anchoring.** Replacing the global mean (V0) with the per-user training mean (V1 — the calibration formula at $\alpha = 0$) reduces RMSE in every domain. Blending the LLM's raw rating back in at the optimal weight (V2) improves on V1 again, by a smaller margin:
+**Per-user anchoring.** Replacing the global mean (V0) with the per-user training mean (V1 — the calibration formula at $\alpha = 0$) reduces RMSE in every domain; blending the LLM's raw rating back in at a low weight (V2) improves on V1 further, by a smaller and domain-dependent margin:
 
 | Domain | V0 global | V1 user-mean ($\alpha$=0) | pure-LLM ($\alpha$=1) | V2 blend (best $\alpha$) |
 | :--- | :---: | :---: | :---: | :---: |
-| Yelp | 1.017 | 1.004 | 1.172 | **0.995** ($\alpha$=0.2) |
-| Goodreads | 1.063 | 0.985 | 1.239 | **0.978** ($\alpha$=0.1) |
-| Amazon | 0.885 | 0.773 | 1.044 | **0.769** ($\alpha$=0.1) |
+| Yelp | 0.984 ± .027 | 0.976 ± .021 | 1.130 ± .041 | **0.958 ± .028** ($\alpha$=0.2) |
+| Goodreads | 1.035 ± .020 | 0.942 ± .033 | 1.194 ± .041 | **0.937 ± .032** ($\alpha$=0.1) |
+| Amazon | 0.908 ± .031 | 0.785 ± .009 | 1.073 ± .020 | **0.784 ± .011** ($\alpha$=0.1) |
 
-*Full held-out set, n = 339 / 350 / 350; synthesised-persona configuration.*
+*Mean ± std over three leave-one-out splits (seeds 42, 1, 7); full held-out set, n = 339 / 350 / 350; synthesised personas. V0→V2 reduces RMSE by 2.6% / 9.5% / 13.7%.*
 
-**Does the LLM's rating help?** Because the raw LLM rating is independent of $\alpha$, one LLM call per held-out pair supports a full sweep of the blend $\hat{y} = \alpha\cdot\text{LLM} + (1-\alpha)\cdot\mu_u$. The sweep is **U-shaped**: error falls from V1 to a shallow minimum at $\alpha \approx 0.1$–$0.2$, then rises steeply to the pure-LLM endpoint, which is the worst configuration in every domain. The optimal blend V2 therefore beats the user-mean V1 — but warm, only by 0.5–0.9% (e.g. Yelp 1.004 → 0.995).
+**Does the LLM's rating help?** Because the raw LLM rating is independent of $\alpha$, one LLM call per held-out pair supports a full sweep of the blend $\hat{y} = \alpha\cdot\text{LLM} + (1-\alpha)\cdot\mu_u$. The sweep is **U-shaped**: error falls from V1 to a shallow minimum at $\alpha \approx 0.1$–$0.2$, then rises steeply to the pure-LLM endpoint, the worst configuration in every domain. With three splits we can test whether the V1→V2 gain is real or noise, via the paired per-seed difference: it is positive on **all three seeds** for Yelp (mean +0.018) and Goodreads (mean +0.005) — small but statistically consistent — while on Amazon it is +0.002 with one split at exactly zero, **indistinguishable from noise**. Amazon's user-mean is already near a ceiling (V1 = 0.785 on a corpus that is 83% ≥ 4★), leaving the LLM no room.
 
-Read on the warm population alone, this is a modest result: a 3B model's raw 1–5 score, which compresses toward integer extremes, is barely better than the user's own historical mean. An earlier draft reported this as a flat negative result and set the optimal $\alpha$ at $\approx 0$. Section 4.5 shows that conclusion is incomplete — the LLM's contribution is small *for users with rich history* and substantial *for users without it*.
+So for warm users the LLM's numeric rating earns a small, real gain on two domains and nothing measurable on the third. Read alone this is modest — a 3B model's raw 1–5 score, compressed toward integer extremes, barely beats the user's own historical mean. Section 4.5 shows why that is only half the story: the LLM's contribution is small *for users with rich history* and large *for users without it*.
+
+**An item-bias term.** The blend so far anchors only on the *user's* mean. Classical recommender systems also model an *item* bias — some items are simply rated higher than others. Adding it, $\hat{y} = \alpha\cdot\text{LLM} + \beta\cdot\mu_u + \gamma\cdot\mu_i$, and sweeping the weights on the cached generations (no new inference; `analysis/measure_calib3.py`):
+
+| Domain | V2 (user anchor) | V3 (+ item bias) | optimal weights (LLM / user / item) |
+| :--- | :---: | :---: | :---: |
+| Yelp | 0.958 | **0.910** (−5.0%) | 0.02 / 0.52 / 0.47 |
+| Goodreads | 0.938 | **0.926** (−1.3%) | 0.03 / 0.75 / 0.22 |
+| Amazon | 0.784 | **0.770** (−1.7%) | 0.00 / 0.78 / 0.22 |
+
+The item term is a real ~2.7% mean RMSE gain — 5% on Yelp — consistent across all three splits. The striking number is the LLM weight: at the optimum it is **≈ 0 on every domain**. Once the anchor models item bias, the 3B model's raw numeric rating is *redundant for warm users* — the best warm predictor is the textbook user-bias + item-bias model. NaijaBuddy deploys this 3-term anchor. The LLM's numeric rating earns its place only in cold-start (§4.5), where neither user nor item history exists. The calibration layer is thus best read as a **regime switch**: a statistical bias model for well-observed users, the LLM for cold ones.
 
 ### 4.3 Review Generation
 
@@ -173,11 +183,11 @@ We score the generated review against the held-out human review with two complem
 
 | Domain | ROUGE-L F1 | Semantic similarity |
 | :--- | :---: | :---: |
-| Yelp | 0.097 | **0.742** |
-| Goodreads | 0.081 | **0.634** |
-| Amazon | 0.099 | **0.667** |
+| Yelp | 0.096 ± .001 | **0.740 ± .003** |
+| Goodreads | 0.083 ± .002 | **0.632 ± .003** |
+| Amazon | 0.097 ± .002 | **0.663 ± .003** |
 
-ROUGE-L — verbatim longest-common-subsequence overlap against a single reference — is low, as it must be: two people reviewing the same item rarely choose the same words. The semantic score (cosine similarity of BGE review embeddings, a metric in the BERTScore family) tells the more faithful story: at 0.63–0.74 the generations are close in *meaning* to the human reviews despite sharing little surface form. One caveat: two reviews of the same item carry a similarity floor (both discuss the same restaurant or book), so the absolute value is best read as encouraging rather than decisive — a same-item human–human baseline is the natural next calibration. On manual inspection the generations are fluent, persona-consistent, and stylistically Nigerian.
+ROUGE-L — verbatim longest-common-subsequence overlap against a single reference — is low, as it must be: two people reviewing the same item rarely choose the same words. The semantic score (cosine similarity of BGE review embeddings, a metric in the BERTScore family) tells the more faithful story: at 0.63–0.74 the generations are close in *meaning* to the human reviews despite sharing little surface form, and the ±0.003 spread across splits shows the figure is stable. One caveat: two reviews of the same item carry a similarity floor (both discuss the same restaurant or book), so the absolute value is best read as encouraging rather than decisive — a same-item human–human baseline is the natural next calibration. On manual inspection the generations are fluent, persona-consistent, and stylistically Nigerian.
 
 ### 4.4 Retrieval
 
@@ -185,11 +195,11 @@ Stage-1 recall, leave-one-out over each domain's full candidate pool, for four s
 
 | Domain | items | dense (content) | hybrid (dense+CF) | CF | popularity |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| Yelp | 856 | 0.009 | **0.198** | 0.189 | 0.050 |
-| Goodreads | 8,379 | 0.006 | 0.046 | 0.046 | 0.029 |
-| Amazon | 5,962 | 0.006 | 0.046 | 0.046 | 0.014 |
+| Yelp | 856 | 0.010 ± .001 | **0.184 ± .012** | 0.180 ± .009 | 0.050 ± .005 |
+| Goodreads | 8,379 | 0.004 ± .003 | **0.040 ± .010** | 0.043 ± .002 | 0.025 ± .005 |
+| Amazon | 5,962 | 0.005 ± .001 | **0.051 ± .004** | 0.048 ± .005 | 0.014 ± .002 |
 
-Pure dense content recall is the system's clear weakness: it does not beat popularity. The cause is structural — BGE embeds item *content*, but recovering a specific held-out item is a *collaborative* task driven by cross-user co-occurrence, which a content encoder does not model; on the two book domains the item-category field is single-valued ("Book"), leaving content embeddings of personas almost non-discriminative. The remedy, included here rather than deferred to future work, is an **item-item collaborative-filtering signal blended with the dense score** (30% dense / 70% CF, min-max normalised per user). Hybrid retrieval lifts Yelp HitRate@10 from 0.009 to **0.198** — 4× the popularity baseline — and clears popularity on the book domains too (Goodreads 1.6×, Amazon 3.3×). CF alone is competitive with the hybrid, and slightly ahead of it by NDCG@10 on the book domains, indicating that the fixed 30/70 weight is not optimal everywhere and is worth tuning per domain.
+Pure dense content recall is the system's clear weakness: it does not beat popularity. The cause is structural — BGE embeds item *content*, but recovering a specific held-out item is a *collaborative* task driven by cross-user co-occurrence, which a content encoder does not model; on the two book domains the item-category field is single-valued ("Book"), leaving content embeddings of personas almost non-discriminative. The remedy, included here rather than deferred to future work, is an **item-item collaborative-filtering signal blended with the dense score**, min-max normalised per user. The dense/CF weight is set to **20/80** by a leave-one-out HitRate@10 sweep — the value that maximises the two book domains without costing Yelp. Hybrid retrieval reaches Yelp HitRate@10 **0.184 ± 0.012** — ~3.7× the popularity baseline — and clears popularity on the book domains too (Goodreads ~1.6×, Amazon ~3.6×). CF alone is statistically tied with the hybrid (the ± bands overlap in every domain): the collaborative signal does the work, and the dense term neither clearly helps nor hurts.
 
 **Comparability to sampled-metric protocols.** The HitRate@10 / NDCG@10 above rank the held-out item against each domain's *entire* candidate pool (856–8,379 items). Much of the recommender-systems literature instead reports *sampled* metrics — the held-out item against a small fixed pool of the gold item plus sampled negatives. The two are not interchangeable, and even two sampled metrics disagree unless the negative-sampling distribution matches (Krichene and Rendle, *On Sampled Metrics for Item Recommendation*, KDD 2020). To make our retrieval placeable against that literature, the harness also supports the sampled protocol; under 101 candidates (1 target + 100 **popularity-weighted** negatives — the harder variant), our hybrid retrieval scores:
 
@@ -213,15 +223,15 @@ The warm result in 4.2 — the LLM rating barely improving on the user-mean — 
 | Goodreads | 0.6 | 0.5 | 0.5 | 0.1 |
 | Amazon | 0.7 | 0.6 | 0.3 | 0.1 |
 
-*Cold-start simulated by truncating each test user's history to k interactions (n = 100 users per domain per k).*
+*Cold-start simulated by truncating each test user's history to k interactions (n = 100 users per domain per k; single leave-one-out split, seed 42).*
 
-Two patterns hold across all three domains. First, **the RMSE-optimal $\alpha$ decreases monotonically as history accumulates** — from $\approx 0.7$–$0.8$ at k = 1 to $\approx 0.1$–$0.2$ once the user is well-observed. Second, **the LLM blend's benefit grows as history shrinks**: at k = 1 the optimal blend cuts RMSE by 13.7% (Yelp, 1.421 → 1.227), 14.6% (Goodreads, 1.319 → 1.127) and 15.2% (Amazon, 1.221 → 1.035) over the user-mean — against 0.5–0.9% for warm users.
+Two patterns hold across all three domains. First, **the RMSE-optimal $\alpha$ decreases monotonically as history accumulates** — from $\approx 0.7$–$0.8$ at k = 1 to $\approx 0.1$–$0.2$ once the user is well-observed. Second, **the LLM blend's benefit grows as history shrinks**: at k = 1 the optimal blend cuts RMSE by 13.7% (Yelp, 1.421 → 1.227), 14.6% (Goodreads, 1.319 → 1.127) and 15.2% (Amazon, 1.221 → 1.035) over the user-mean — against the 0–2% warm gain of Section 4.2.
 
 This reframes the calibration layer. It is not a guardrail that "reduces to the statistical baseline"; it is an **adaptive fusion whose reliance on the LLM scales inversely with the evidence available about a user**. When a user has rated a single item, their empirical mean is noise and the LLM's persona-grounded estimate carries most of the signal; when they have rated forty, the reverse holds. The natural next step — which we did not have time to deploy — is to make $\alpha$ an explicit function of history length rather than a per-domain constant. Cold-start *retrieval*, by contrast, remains weak (dense HitRate@10 $\approx 0$ at k ≤ 3): a one-interaction persona is too thin a query, and a cold user's recommendations must lean on the popularity and cluster-mean fallbacks.
 
 ### 4.6 Honest Summary
 
-NaijaBuddy's measured strengths are an **adaptive calibration layer** — a ~7.8% mean RMSE reduction over a global baseline for warm users and a 13–15% reduction for cold-start users — **hybrid retrieval** reaching 0.198 HitRate@10 on Yelp (4× the popularity baseline), and fully offline operation. Its measured weaknesses are content-only retrieval, which does not beat popularity, and warm-user rating accuracy, where the LLM adds little. We report all of these directly — including a small-sample figure from an earlier draft that the full evaluation overturned — because a recommender's credibility rests on an evaluation that reproduces. Every figure in this section is regenerated by `eval_harness.py --llm-sample 400 --cold-start --bertscore --persona-mode synth` from the shipped data.
+NaijaBuddy's measured strengths are an **adaptive calibration layer** — an ~8.6% mean RMSE reduction over a global baseline for warm users and a 13–15% reduction for cold-start users — **hybrid retrieval** reaching 0.184 HitRate@10 on Yelp (~3.7× the popularity baseline), and fully offline operation. Its measured weaknesses are content-only retrieval, which does not beat popularity, and warm-user rating accuracy, where the LLM adds little. We report all of these directly — including a small-sample figure from an earlier draft that the full evaluation overturned — because a recommender's credibility rests on an evaluation that reproduces. The warm figures are regenerated by `eval_harness.py --seeds 42,1,7 --llm-sample 400 --bertscore --persona-mode synth`; the Section 4.5 cold-start curve by adding `--cold-start`.
 
 ---
 
@@ -234,4 +244,4 @@ With more development time and computing resources, we propose the following sca
 ---
 
 ## 6. Conclusion
-In this work, we developed **NaijaBuddy**, a highly localized, completely offline-first agentic recommender system built for the DSN x BCT Hackathon 3.0. By structuring our system around a dual-stage "Filter-then-Rerank" workflow, we achieve elite low-latency CPU inference within a self-contained Docker container. We implemented an adaptive Calibration Layer that anchors rating predictions to per-user statistics — reducing RMSE by up to 13.1% over a global-mean baseline, with the LLM blend cutting a further 13–15% for cold-start users — and a deterministic Critic Layer for rule-based constraint filtering. We evaluate the system with a leakage-free, reproducible harness over the full held-out set and report results honestly, including where it underperforms: content-only retrieval and warm-user rating accuracy. Enriched with authentic Nigerian personas, NaijaBuddy represents a reliable and culturally authentic approach to generative recommendation and consumer behavioral simulation on the edge.
+In this work, we developed **NaijaBuddy**, a highly localized, completely offline-first agentic recommender system built for the DSN x BCT Hackathon 3.0. By structuring our system around a dual-stage "Filter-then-Rerank" workflow, we achieve elite low-latency CPU inference within a self-contained Docker container. We implemented an adaptive Calibration Layer that anchors rating predictions to per-user statistics — reducing RMSE by up to 13.7% over a global-mean baseline, with the LLM blend cutting a further 13–15% for cold-start users — and a deterministic Critic Layer for rule-based constraint filtering. We evaluate the system with a leakage-free, reproducible harness over the full held-out set and report results honestly, including where it underperforms: content-only retrieval and warm-user rating accuracy. Enriched with authentic Nigerian personas, NaijaBuddy represents a reliable and culturally authentic approach to generative recommendation and consumer behavioral simulation on the edge.

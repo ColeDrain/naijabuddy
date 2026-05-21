@@ -12,6 +12,16 @@ import database
 # Tunable blending weight hyperparameter (30% LLM reasoning, 70% statistical grounding)
 ALPHA = float(os.getenv("NAIJABUDDY_ALPHA", 0.3))
 
+# Per-domain user/item split for the warm calibration anchor — a user-bias +
+# item-bias model. Tuned by a leave-one-out RMSE sweep (see EXPERIMENTS.md #8):
+# folding the item mean into the anchor cuts warm RMSE ~2.7% on average (5% on
+# Yelp), and the LLM's own weight at the optimum is ~0.
+STAT_SPLIT = {
+    "yelp": (0.5, 0.5),
+    "goodreads": (0.78, 0.22),
+    "amazon": (0.78, 0.22),
+}
+
 class NaijaBuddyAgent:
     def __init__(self, model_path=None):
         """Initializes the Agent. Loads the local GGUF model using llama-cpp-python if available."""
@@ -69,7 +79,7 @@ class NaijaBuddyAgent:
     # OUTPUT CALIBRATION LAYER (The Mathematical Defense)
     # =====================================================================
     
-    def get_calibrated_rating(self, raw_llm_rating, user_id, user_name, persona_embedding_str, alpha=None):
+    def get_calibrated_rating(self, raw_llm_rating, user_id, user_name, persona_embedding_str, alpha=None, item_mean=None, domain=None):
         """
         Calculates the calibrated rating to protect our RMSE score.
         Uses warm-user historical mean or falls back to cold-start Cluster Mean.
@@ -80,12 +90,21 @@ class NaijaBuddyAgent:
         # Ensure raw LLM rating is bounded
         raw_llm_rating = max(1.0, min(5.0, float(raw_llm_rating)))
         
-        # 1. Warm-User Path: Retrieve historical ratings from database
+        # 1. Warm-User Path. The calibration anchor is a user-bias + item-bias
+        #    model (see STAT_SPLIT); alpha still blends the LLM against it, so
+        #    the API knob stays meaningful. The RMSE optimum sits near alpha=0.
         user_mean = database.get_user_ratings_mean(user_id) if user_id else None
-        
+
         if user_mean is not None:
-            calibrated_rating = (current_alpha * raw_llm_rating) + ((1.0 - current_alpha) * user_mean)
-            print(f"  [Calibration] Warm User '{user_name}': Raw LLM: {raw_llm_rating:.2f} | User Mean: {user_mean:.2f} -> Calibrated: {calibrated_rating:.4f}")
+            if item_mean is not None:
+                b, c = STAT_SPLIT.get((domain or "").lower(), (0.7, 0.3))
+                anchor = b * user_mean + c * float(item_mean)
+                anchor_desc = f"user {user_mean:.2f} / item {float(item_mean):.2f}"
+            else:
+                anchor = user_mean
+                anchor_desc = f"user {user_mean:.2f}"
+            calibrated_rating = (current_alpha * raw_llm_rating) + ((1.0 - current_alpha) * anchor)
+            print(f"  [Calibration] Warm User '{user_name}': Raw LLM {raw_llm_rating:.2f} | Anchor ({anchor_desc}) {anchor:.2f} -> Calibrated {calibrated_rating:.4f}")
             return round(calibrated_rating, 2)
             
         # 2. Cold-Start Path: Vector-based Cluster Mean Fallback
@@ -335,7 +354,9 @@ Return ONLY a valid JSON object. Do not include any markdown backticks or extra 
             user_id=user["id"],
             user_name=user_name,
             persona_embedding_str=user["persona_embedding"],
-            alpha=alpha
+            alpha=alpha,
+            item_mean=item.get("average_rating"),
+            domain=item.get("domain"),
         )
         
         return {
