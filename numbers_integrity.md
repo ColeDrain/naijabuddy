@@ -23,6 +23,7 @@ python eval_harness.py --seeds 42,1,7 --llm-sample 400 --bertscore --persona-mod
 | §4.4 sampled-metric (101-candidate) NDCG@10 | 0.337 / 0.248 / 0.301 | `python eval_harness.py --no-llm --persona-mode synth --candidate-pool 101 --pop-distractors` |
 | §4.5 cold-start — optimal α, RMSE curve | α 0.8/0.6/0.3 …; 1.421→1.227 etc. | `python eval_harness.py --llm-sample 400 --cold-start --bertscore --persona-mode synth` |
 | §4.6 persona ablation — template vs synth | RMSE ≈ equal; Yelp HitRate@10 0.174 vs 0.198 | the canonical run with `--persona-mode template` vs `synth` (seed 42) |
+| §4.7 RAG ablation — V2 RMSE, Semantic-BGE, ROUGE-L | rag 0.999/0.977/0.770 · BGE 0.763/0.645/0.683 · ROUGE-L 0.099/0.090/0.100 | `python eval_harness.py --persona-mode rag --llm-sample 400 --bertscore --seed 42` |
 
 ## Discarded / superseded figures
 

@@ -18,6 +18,7 @@ order **Yelp / Goodreads / Amazon**. All dates 2026.
 | 6 | Multi-seed (seeds 42, 1, 7) — **CURRENT CANONICAL** | 05-21 | RMSE V2 0.958±.03 / 0.937±.03 / 0.784±.01 | V2>V1 real on Yelp/Goodreads, ≈0 on Amazon |
 | 7 | Data study: item-mean + variance buckets | 05-21 | user+item blend 0.949 on Yelp — beats LLM V2 | → motivates 3-term calibration |
 | 8 | 3-term calibration measurement (item-mean) | 05-21 | V3 vs V2: −5.0% Yelp, −1.3% GR, −1.7% AMZ; LLM weight ≈ 0 | item-bias is the win; LLM redundant warm |
+| 9 | T2: retrieval-augmented prompting (`--persona-mode rag`) | 05-21 | rating ≈ synth (Δ ≤ .004, in seed noise); review Sem-BGE +.011–.020 all 3 domains | retrieval aids generation, not regression |
 
 ## Detail
 
@@ -90,13 +91,32 @@ Finding: warm rating prediction is best solved by a user-bias + item-bias
 model; the LLM's numeric rating is redundant warm — its value is entirely in
 cold-start (§4.5).
 
+### 9 — Retrieval-augmented prompting (Tier 2)
+`python eval_harness.py --persona-mode rag --llm-sample 400 --bertscore --seed 42`
+Seeds the LLM prompt with the user's **k = 4 most-similar past interactions**
+(real item description + the rating/review the user gave it), retrieved by cosine
+similarity to the target item, in place of an abstracted persona. Compared
+against the synth-persona arm at the **same seed 42** (`per_seed['42']` of #6)
+so V1 — the persona-independent user-mean — is identical (1.004 / 0.985 / 0.773),
+confirming the splits match.
+RMSE V2 — rag **0.999 / 0.977 / 0.770** vs synth-s42 0.995 / 0.978 / 0.769:
+Δ ≤ 0.004, inside §4.2 seed noise; best α stays 0.1 / 0.2 / 0.1.
+Review — Semantic-BGE rag **0.763 / 0.645 / 0.683** vs synth 0.742 / 0.634 / 0.667
+(**+.011 to +.020, all three domains**); ROUGE-L rag 0.099 / 0.090 / 0.100 vs
+synth 0.097 / 0.081 / 0.099.
+Finding: RAG does not move warm-user rating — a third confirmation of the
+user-mean-dominates regime after the template (#2) and synth (#3) arms — but
+gives a small, consistent lift to review-text fidelity. Retrieval helps the
+generative sub-task, not the regression sub-task.
+Artifacts: `scratch/eval_rag_results.json`, `scratch/eval_rag.log`.
+
 ## Planned / pending
 
 | ID | Experiment | Status |
 |---|---|---|
 | T1a | 3-term calibration `α·LLM + β·μ_user + γ·μ_item` | ✅ shipped — 3-term anchor in agent.py + paper §4.2 |
 | T1b | Variance-bucketed V2-vs-V1 analysis (post-hoc from cache) | not started |
-| T2 | Retrieval-augmented prompting — ablation vs static persona | not started |
+| T2 | Retrieval-augmented prompting — ablation vs static persona | ✅ shipped — experiment #9, paper §4.7 |
 
 ## Reproduction
 
