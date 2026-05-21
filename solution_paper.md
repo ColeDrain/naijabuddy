@@ -167,6 +167,18 @@ We evaluate NaijaBuddy with a leakage-free, out-of-sample protocol and report th
 
 So for warm users the LLM's numeric rating earns a small, real gain on two domains and nothing measurable on the third. Read alone this is modest — a 3B model's raw 1–5 score, compressed toward integer extremes, barely beats the user's own historical mean. Section 4.5 shows why that is only half the story: the LLM's contribution is small *for users with rich history* and large *for users without it*.
 
+**Two populations of users.** Averaged over everyone the warm gain looks small — but the average hides structure. Bucketing test users by the spread of their own training ratings (per-user standard deviation) shows that rating prediction is really *two problems*:
+
+| Domain | low-σ users (σ<0.6) | mid-σ (0.6–1.0) | high-σ users (σ≥1.0) |
+| :--- | :---: | :---: | :---: |
+| Goodreads | 0.38 | 0.87 | 1.21 |
+| Amazon | 0.57 | 0.76 | 1.12 |
+| Yelp | 1.05 | 0.99 | 1.02 |
+
+*V1 (user-mean) RMSE by per-user rating-variance bucket; seed 42, `analysis/study_data.py`.*
+
+On the two book domains the pattern is stark and monotonic: for users who rate consistently, predicting their mean is essentially a solved problem (RMSE 0.38–0.57); for users whose ratings are scattered, the *same* predictor is **~3× worse** (1.1–1.2) — and much of that gap is genuinely irreducible variance that no model can recover. (Yelp is flatter: its users cluster in the mid band, with few at either extreme.) This is why the headline warm gain looks small — it is diluted across a predictable majority that nothing can improve. The modelling budget, the LLM, is best spent on the high-variance tail and on cold users — exactly the regime split that §4.5 formalises.
+
 **An item-bias term.** The blend so far anchors only on the *user's* mean. Classical recommender systems also model an *item* bias — some items are simply rated higher than others. Adding it, $\hat{y} = \alpha\cdot\text{LLM} + \beta\cdot\mu_u + \gamma\cdot\mu_i$, and sweeping the weights on the cached generations (no new inference; `analysis/measure_calib3.py`):
 
 | Domain | V2 (user anchor) | V3 (+ item bias) | optimal weights (LLM / user / item) |
@@ -229,7 +241,19 @@ Two patterns hold across all three domains. First, **the RMSE-optimal $\alpha$ d
 
 This reframes the calibration layer. It is not a guardrail that "reduces to the statistical baseline"; it is an **adaptive fusion whose reliance on the LLM scales inversely with the evidence available about a user**. When a user has rated a single item, their empirical mean is noise and the LLM's persona-grounded estimate carries most of the signal; when they have rated forty, the reverse holds. The natural next step — which we did not have time to deploy — is to make $\alpha$ an explicit function of history length rather than a per-domain constant. Cold-start *retrieval*, by contrast, remains weak (dense HitRate@10 $\approx 0$ at k ≤ 3): a one-interaction persona is too thin a query, and a cold user's recommendations must lean on the popularity and cluster-mean fallbacks.
 
-### 4.6 Honest Summary
+### 4.6 Ablation — Does LLM Persona Synthesis Help?
+
+NaijaBuddy can model a user two ways: a deterministic **template** persona (category list plus two review snippets) or an **LLM-synthesised** prose persona. Holding everything else fixed (seed 42, identical retrieval weights), we run the full evaluation under each:
+
+| Metric | Template persona | Synthesised persona |
+| :--- | :---: | :---: |
+| RMSE V2 (Yelp / Goodreads / Amazon) | 0.998 / 0.980 / 0.768 | 0.995 / 0.978 / 0.769 |
+| Hybrid HitRate@10 — Yelp | 0.174 | **0.198** |
+| Hybrid HitRate@10 — Goodreads / Amazon | 0.051 / 0.054 | 0.046 / 0.046 |
+
+Synthesis makes **no measurable difference to rating accuracy** — unsurprising, since §4.2 shows the rating is anchored on statistics, not on the persona text. Its effect is on *retrieval*, and it is **domain-dependent**: a fluent prose persona lifts Yelp recall by ~14% (0.174 → 0.198), because Yelp items carry rich, discriminative categories a descriptive persona can match; on the two book domains, where every item's category is the single token "Book", the prose persona slightly *hurts* (≈0.05 → 0.046) — it adds wording the content encoder cannot ground. The honest reading: persona synthesis earns its cost where item content is discriminative and is roughly neutral-to-negative where it is not. We keep it enabled — it matches the deployed conversational system and carries the human-facing demo — but report it as a genuine *mixed* ablation result, not an unqualified win.
+
+### 4.7 Honest Summary
 
 NaijaBuddy's measured strengths are an **adaptive calibration layer** — an ~8.6% mean RMSE reduction over a global baseline for warm users and a 13–15% reduction for cold-start users — **hybrid retrieval** reaching 0.184 HitRate@10 on Yelp (~3.7× the popularity baseline), and fully offline operation. Its measured weaknesses are content-only retrieval, which does not beat popularity, and warm-user rating accuracy, where the LLM adds little. We report all of these directly — including a small-sample figure from an earlier draft that the full evaluation overturned — because a recommender's credibility rests on an evaluation that reproduces. The warm figures are regenerated by `eval_harness.py --seeds 42,1,7 --llm-sample 400 --bertscore --persona-mode synth`; the Section 4.5 cold-start curve by adding `--cold-start`.
 
