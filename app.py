@@ -62,6 +62,21 @@ class CreateUserRequest(BaseModel):
     name: str
     persona: str
 
+# Web-UI request schemas (free-text persona) — consumed by /task_a and /task_b.
+class TaskARequest(BaseModel):
+    user_persona: str
+    product: dict = {}
+    platform: str = ""
+    naija_mode: bool = False
+
+class TaskBRequest(BaseModel):
+    user_persona: str
+    platform: str = ""
+    naija_mode: bool = False
+
+# The web UI speaks "platform"; the agent and datasets speak "domain".
+PLATFORM_DOMAIN = {"yelp": "Yelp", "amazon": "Amazon", "goodreads": "Goodreads"}
+
 # =====================================================================
 # API ENDPOINTS
 # =====================================================================
@@ -191,6 +206,79 @@ def recommend_items(req: RecommendRequest):
         return recommendations
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Recommender agent error: {str(e)}")
+
+# =====================================================================
+# WEB-UI ENDPOINTS (free-text persona — used by the bundled dashboard)
+# =====================================================================
+
+@app.get("/health")
+def health():
+    """Readiness probe — reports whether the local GGUF LLM loaded."""
+    return {"model_warm": agent.llm is not None}
+
+@app.post("/task_a")
+def task_a(req: TaskARequest):
+    """Task A from a typed persona + typed product (cold-start review + rating)."""
+    import time
+    t0 = time.time()
+    try:
+        domain = PLATFORM_DOMAIN.get((req.platform or "").lower())
+        embedding = get_embedder().encode(req.user_persona).tolist()
+        result = agent.simulate_review_adhoc(
+            persona=req.user_persona,
+            persona_embedding=embedding,
+            product=req.product or {},
+            naija_mode=req.naija_mode,
+            domain=domain,
+        )
+        result["latency_ms"] = int((time.time() - t0) * 1000)
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Task A error: {str(e)}")
+
+@app.post("/task_b")
+def task_b(req: TaskBRequest):
+    """Task B from a typed persona (cold-start dense retrieval + LLM rerank)."""
+    import time
+    t0 = time.time()
+    domain = PLATFORM_DOMAIN.get((req.platform or "").lower())
+    if not domain:
+        raise HTTPException(status_code=400, detail=f"Unknown platform '{req.platform}'. Use yelp, amazon or goodreads.")
+    try:
+        embedding = get_embedder().encode(req.user_persona).tolist()
+        recs = agent.recommend_adhoc(
+            persona=req.user_persona,
+            persona_embedding=embedding,
+            domain=domain,
+            naija_mode=req.naija_mode,
+        )
+        if isinstance(recs, dict) and "error" in recs:
+            raise HTTPException(status_code=400, detail=recs["error"])
+        ranked = [
+            {
+                "rank": i + 1,
+                "item_id": f"{domain.upper()}-{r['id']}",
+                "title": r["name"],
+                "category": r["category"],
+                "reason": r["explanation"],
+                "collab_score": round(max(0.0, min(1.0, r.get("similarity", 0.0))) * 100),
+            }
+            for i, r in enumerate(recs)
+        ]
+        return {
+            "ranked": ranked,
+            "model": "Qwen2.5-3B-Instruct (local GGUF)" if agent.llm else "mock-fallback (LLM not loaded)",
+            "naija_mode": req.naija_mode,
+            "latency_ms": int((time.time() - t0) * 1000),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Task B error: {str(e)}")
 
 # =====================================================================
 # STATIC ASSETS ROUTING (For serving Web dashboard assets)

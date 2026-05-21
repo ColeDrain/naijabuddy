@@ -1,167 +1,69 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NaijaBuddy | Unified Recommender & User Modeling Agent</title>
-    <!-- Google Fonts: Outfit and Outfit Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome for Premium Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>NaijaBuddy · DSN×BCT LLM Agent Challenge</title>
+
+<!-- Fonts vendored locally for 100% offline operation. -->
+<!-- Headings: Cabinet Grotesk. Body: Inter. Serif accent: Lora. Mono: JetBrains Mono -->
+<link rel="stylesheet" href="vendor/fonts.css" />
+
+<!-- Tailwind, React and Babel are vendored under /vendor so the UI runs with -->
+<!-- zero network calls — matching NaijaBuddy's offline-first guarantee. -->
+<script src="vendor/tailwind.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          paper: "#FAF7F2",
+          ink:   "#1A1F2E",
+          emerald9: "#00563B",
+          emerald10:"#04412E",
+          terracotta:"#C75D3A",
+          ochre: "#E8C547",
+          stone1:"#F2EFE8",
+          stone2:"#E5E1D8",
+          stone3:"#C9C3B6",
+          stone4:"#9CA3AF",
+        },
+        fontFamily: {
+          display: ['"Cabinet Grotesk"', "ui-sans-serif", "system-ui"],
+          sans: ['"Inter"', "ui-sans-serif", "system-ui"],
+          serif: ['"Lora"', "ui-serif", "Georgia"],
+          mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
+        },
+        boxShadow: {
+          card: "0 1px 2px rgba(26,31,46,0.04), 0 1px 0 rgba(26,31,46,0.02)",
+          pop:  "0 8px 24px -12px rgba(26,31,46,0.18), 0 2px 4px rgba(26,31,46,0.04)",
+        },
+        letterSpacing: {
+          tightish: "-0.018em",
+          tighter2: "-0.024em",
+        },
+      },
+    },
+  };
+</script>
+
+<link rel="stylesheet" href="styles.css" />
+
+<!-- React + Babel — vendored, no CDN -->
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
 </head>
-<body>
-    <div class="glass-container">
-        <!-- LEFT PANEL: Brand & Persona Selector -->
-        <aside class="sidebar">
-            <div class="brand">
-                <div class="logo-icon"><i class="fa-solid fa-compass-drafting"></i></div>
-                <div class="brand-text">
-                    <h1>NaijaBuddy</h1>
-                    <span>Agentic Recommender</span>
-                </div>
-            </div>
-            
-            <div class="sidebar-section">
-                <h2><i class="fa-solid fa-users-gear"></i> Select Active Persona</h2>
-                <div class="persona-list" id="personaList">
-                    <!-- Loaded dynamically via script.js -->
-                    <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i> Loading personas...</div>
-                </div>
-            </div>
-            
-            <div class="sidebar-section custom-persona-box">
-                <h2><i class="fa-solid fa-user-plus"></i> Custom Cold-Start Persona</h2>
-                <input type="text" id="customName" placeholder="Enter Persona Name (e.g., Emeka)" class="flat-input">
-                <textarea id="customPersona" placeholder="Describe persona tastes, habits, age, and style..." rows="3" class="flat-textarea"></textarea>
-                <button class="flat-btn" id="createCustomBtn"><i class="fa-solid fa-wand-magic-sparkles"></i> Initialize Cold-Start</button>
-            </div>
-        </aside>
+<body class="bg-paper text-ink antialiased font-sans">
+  <div id="root"></div>
 
-        <!-- CENTER PANEL: Conversational Chat Interface -->
-        <main class="chat-panel">
-            <header class="chat-header">
-                <div class="active-user-info">
-                    <div class="active-avatar"><i class="fa-solid fa-user-astronaut"></i></div>
-                    <div>
-                        <h3 id="activeUserName">Kunle (VI Tech Bro)</h3>
-                        <span id="activeUserSub">Active Simulation Persona</span>
-                    </div>
-                </div>
-                <div class="api-status">
-                    <span class="status-indicator online"></span>
-                    <span>Local GGUF Offline</span>
-                </div>
-            </header>
-
-            <div class="chat-messages" id="chatMessages">
-                <!-- Welcome greeting bubble -->
-                <div class="msg bubble-bot">
-                    <div class="msg-avatar"><i class="fa-solid fa-robot"></i></div>
-                    <div class="msg-content">
-                        <p><strong>NaijaBuddy:</strong> Welcome boss! 🇳🇬 I am your agentic recommender system grounded in collaborative filtering and local LLM reasoning. Select a persona on the left and tell me what you need, or choose one of my quick action prompts below!</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Suggestion / Insta-Prompts Container -->
-            <div class="chat-shortcuts" id="instaPrompts">
-                <button class="shortcut-btn" onclick="sendPrompt('Recommend spots on Yelp')">
-                    <i class="fa-solid fa-utensils"></i> Yelp Recommendations
-                </button>
-                <button class="shortcut-btn" onclick="sendPrompt('Recommend movies on Amazon')">
-                    <i class="fa-solid fa-film"></i> Amazon Recommendations
-                </button>
-                <button class="shortcut-btn" onclick="sendPrompt('Recommend books on Goodreads')">
-                    <i class="fa-solid fa-book"></i> Goodreads Recommendations
-                </button>
-            </div>
-
-            <footer class="chat-footer">
-                <div class="chat-input-wrapper">
-                    <input type="text" id="chatInput" placeholder="Type a message or command (e.g., 'Simulate review for Shiro')..." autocomplete="off">
-                    <button class="send-btn" id="sendBtn"><i class="fa-solid fa-paper-plane"></i></button>
-                </div>
-            </footer>
-        </main>
-
-        <!-- RIGHT PANEL: Calibration Dial & Statistics (The Math UI) -->
-        <aside class="dashboard-panel">
-            <div class="panel-section">
-                <h2><i class="fa-solid fa-calculator"></i> Calibration Layer</h2>
-                <p class="section-desc">LLMs are prone to positivity bias. We programmatically blend LLM ratings with the user persona's historical baseline.</p>
-                
-                <div class="dial-container">
-                    <div class="slider-header">
-                        <span>LLM Weight (Alpha: <span id="alphaVal">0.3</span>)</span>
-                        <span>User Mean (1 - Alpha)</span>
-                    </div>
-                    <input type="range" id="alphaSlider" min="0" max="100" value="30" class="gradient-slider">
-                    
-                    <div class="formula-preview">
-                        <p class="math-expr">Final = (α × LLM) + ((1 - α) × Baseline)</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel-section">
-                <h2><i class="fa-solid fa-chart-line"></i> User Statistics</h2>
-                <div class="stats-box">
-                    <div class="stat-row">
-                        <span class="stat-label">Historical Mean Rating:</span>
-                        <span class="stat-val" id="statUserMean">4.50</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">Calibration Type:</span>
-                        <span class="stat-val badge" id="statCalType">Warm Start</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">System Mode:</span>
-                        <span class="stat-val badge success">100% Offline</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel-section catalog-browser-box">
-                <h2><i class="fa-solid fa-layer-group"></i> Catalog Browser</h2>
-                <p class="section-desc">View the items seeded inside our SQLite database.</p>
-                <div class="tab-buttons">
-                    <button class="tab-btn active" onclick="loadCatalogTab('Yelp')">Yelp</button>
-                    <button class="tab-btn" onclick="loadCatalogTab('Amazon')">Amazon</button>
-                    <button class="tab-btn" onclick="loadCatalogTab('Goodreads')">Goodreads</button>
-                </div>
-                <div class="catalog-list" id="catalogList">
-                    <!-- Dynamically populated -->
-                    <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i> Loading...</div>
-                </div>
-            </div>
-        </aside>
-    </div>
-
-    <!-- Template elements for cloning in JS -->
-    <template id="recommendCardTemplate">
-        <div class="recommend-card">
-            <div class="card-rank">#1</div>
-            <div class="card-body">
-                <div class="card-header-row">
-                    <h4 class="card-title">Shiro Lagos</h4>
-                    <span class="card-category">Yelp (Food)</span>
-                </div>
-                <p class="card-desc">Japanese upscale dining.</p>
-                <div class="card-justification">
-                    <i class="fa-solid fa-quote-left"></i>
-                    <p class="justification-text">Why recommended...</p>
-                </div>
-                <div class="card-actions">
-                    <span class="card-similarity"><i class="fa-solid fa-bolt"></i> Sim: 89.2%</span>
-                    <button class="simulate-review-btn"><i class="fa-solid fa-comments"></i> Simulate Review</button>
-                </div>
-            </div>
-        </div>
-    </template>
-
-    <script src="script.js"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="data.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="components.jsx"></script>
+  <script type="text/babel" src="task-a.jsx"></script>
+  <script type="text/babel" src="task-b.jsx"></script>
+  <script type="text/babel" src="compare.jsx"></script>
+  <script type="text/babel" src="app.jsx"></script>
 </body>
 </html>

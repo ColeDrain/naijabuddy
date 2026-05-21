@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <pattern id="stripes" x="0" y="0" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+      <rect width="14" height="14" fill="#F2EFE8"></rect>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E5E1D8" stroke-width="6"></line>
+    </pattern>
+  </defs>
+  <rect width="200" height="200" fill="url(#stripes)"></rect>
+  <g transform="translate(100 100)" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="-22" y="-22" width="44" height="44" rx="3"></rect>
+    <circle cx="-9" cy="-9" r="3"></circle>
+    <path d="M22 8 l-13 -13 -27 27"></path>
+  </g>
+  <text x="100" y="158" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" letter-spacing="1.2" fill="#9CA3AF">PRODUCT IMAGE</text>
+</svg>

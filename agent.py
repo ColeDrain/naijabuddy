@@ -508,6 +508,210 @@ Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra te
         return final_recommendations[:top_k]
 
     # =====================================================================
+    # AD-HOC PERSONA PATH (free-text persona + product, no DB rows)
+    # Used by the /task_a and /task_b web-UI endpoints. A typed persona has no
+    # rating history, so both methods run in the cold-start regime.
+    # =====================================================================
+
+    def simulate_review_adhoc(self, persona, persona_embedding, product,
+                              naija_mode=False, alpha=None, domain=None):
+        """Task A from a free-text persona + free-text product.
+
+        With no rating history this is always cold-start: the LLM rating is
+        anchored on the cluster mean of the most similar known users via
+        get_calibrated_rating(user_id=None, ...).
+        """
+        item_name = (product.get("title") or product.get("name") or "the item").strip()
+        item_category = (product.get("category") or "-").strip()
+        item_desc = (product.get("description") or "").strip()
+
+        # Cultural style is the single knob naija_mode turns.
+        if naija_mode:
+            style = ("The reviewer is Nigerian. Write the review in authentic "
+                     "Nigerian Pidgin English with natural local slang and "
+                     "cultural references (e.g. 'Abeg', 'Wahala', 'No cap', "
+                     "'Omo', 'sharp sharp'). It must read like a real Nigerian.")
+        else:
+            style = ("Write the review in clear, neutral, standard English. "
+                     "Keep the tone natural and conversational; do not use "
+                     "slang or regional dialect.")
+
+        prompt = f"""<|im_start|>system
+You are a highly advanced simulation agent modeling a specific human persona.
+Generate an authentic, context-aware star rating and written review.
+
+USER PERSONA PROFILE:
+{persona}
+
+TARGET PRODUCT/SERVICE DETAILS:
+- Name: {item_name}
+- Category: {item_category}
+- Specific Details: {item_desc}
+
+STYLE:
+{style}
+
+CONSTRAINTS:
+1. Keep the review concise and realistic (2 to 4 sentences max).
+2. Use standard everyday review vocabulary, not poetic or academic language.
+3. Do not mention that you are an AI or an agent.
+
+OUTPUT FORMAT (Strict JSON):
+Return ONLY a valid JSON object, no markdown backticks or extra text.
+{{
+  "rating": [realistic float 1.0-5.0 for how this persona rates this item],
+  "review": "[the simulated review text]"
+}}
+<|im_end|>
+<|im_start|>assistant
+"""
+        raw_output = ""
+        if self.llm:
+            try:
+                response = self.llm(prompt, max_tokens=256, temperature=0.2)
+                raw_output = response["choices"][0]["text"].strip()
+            except Exception as e:
+                print(f"Llama-cpp inference error (adhoc Task A): {e}")
+
+        raw_rating, review_text = 4.0, "Decent experience overall."
+        if raw_output:
+            try:
+                if "```" in raw_output:
+                    raw_output = raw_output.split("```json")[-1].split("```")[0].strip()
+                parsed = json.loads(raw_output)
+                raw_rating = float(parsed.get("rating", 4.0))
+                review_text = parsed.get("review", review_text)
+            except Exception as e:
+                print(f"JSON parse error (adhoc Task A): {e} | raw: {raw_output[:200]}")
+
+        # Cold-start alpha: a typed persona has no history, so the calibration
+        # leans on the LLM (paper Section 4.5: optimal alpha ~0.6-0.8 cold).
+        if alpha is None:
+            alpha = 0.6
+
+        # Cluster mean — both for a human-readable rationale and a sanity value.
+        nearest = database.get_nearest_users(persona_embedding, top_k=5) if persona_embedding else []
+        cluster_mean = (sum(u["user_mean_rating"] for u in nearest) / len(nearest)) if nearest else 3.5
+
+        calibrated = self.get_calibrated_rating(
+            raw_llm_rating=raw_rating,
+            user_id=None,
+            user_name="Custom persona",
+            persona_embedding_str=json.dumps(persona_embedding) if persona_embedding else None,
+            alpha=alpha,
+            item_mean=None,
+            domain=domain,
+        )
+
+        reasoning = (
+            f"The LLM read the persona and proposed a raw {raw_rating:.1f}-star rating. "
+            f"A typed persona has no rating history, so the calibration layer treats "
+            f"it as cold-start: it anchors the score to the mean rating of the "
+            f"{len(nearest)} most similar known users ({cluster_mean:.2f}) and blends "
+            f"alpha*LLM + (1-alpha)*anchor with alpha={alpha:.2f}, giving the "
+            f"calibrated {calibrated:.2f}."
+        )
+
+        return {
+            "stars": calibrated,
+            "raw_rating": round(raw_rating, 2),
+            "review": review_text,
+            "reasoning": reasoning,
+            "model": "Qwen2.5-3B-Instruct (local GGUF)" if self.llm else "mock-fallback (LLM not loaded)",
+            "naija_mode": bool(naija_mode),
+        }
+
+    def recommend_adhoc(self, persona, persona_embedding, domain,
+                        naija_mode=False, top_k=5):
+        """Task B from a free-text persona. Dense semantic recall + LLM rerank +
+        critic. A typed persona has no history, so collaborative filtering is
+        unavailable — this is the cold-start dense-retrieval regime.
+        """
+        candidates = database.get_nearest_items(persona_embedding, domain, top_k=10, user_id=None)
+        if not candidates:
+            return {"error": f"No catalogue items found for domain '{domain}'."}
+
+        candidates_json = json.dumps(
+            [{"id": c["id"], "name": c["name"], "category": c["category"],
+              "description": c["description"]} for c in candidates], indent=2)
+
+        tone = ("Write each explanation in authentic Nigerian Pidgin English "
+                "with natural local slang." if naija_mode else
+                "Write each explanation in clear, neutral standard English.")
+
+        prompt = f"""<|im_start|>system
+You are an elite, context-aware recommendation routing agent.
+Select, rank and explain the top 5 most relevant items for a user.
+
+USER PERSONA PROFILE:
+{persona}
+
+TARGET DOMAIN: {domain}
+
+CANDIDATE ITEMS (top 10 from semantic search):
+{candidates_json}
+
+CONSTRAINTS:
+1. Select the top 5 most relevant items and rank them 1 (best) to 5.
+2. Filter out any item that clearly violates the persona's stated constraints.
+3. For each, give a persuasive explanation of exactly 1 sentence (max 15 words).
+4. {tone}
+
+OUTPUT FORMAT (Strict JSON):
+Return ONLY a valid JSON array of exactly 5 objects, no markdown or extra text.
+[
+  {{"id": [item_id], "name": "[item_name]", "rank": [1-5], "explanation": "[why]"}}
+]
+<|im_end|>
+<|im_start|>assistant
+"""
+        raw_output = ""
+        if self.llm:
+            try:
+                response = self.llm(prompt, max_tokens=1024, temperature=0.1)
+                raw_output = response["choices"][0]["text"].strip()
+            except Exception as e:
+                print(f"Llama-cpp inference error (adhoc Task B): {e}")
+
+        reranked = []
+        if raw_output:
+            try:
+                if "```" in raw_output:
+                    raw_output = raw_output.split("```json")[-1].split("```")[0].strip()
+                # Same truncated-JSON repair as recommend_items.
+                if raw_output.startswith("[") and not raw_output.endswith("]"):
+                    cut = raw_output.rfind("}")
+                    if cut != -1:
+                        raw_output = raw_output[:cut + 1] + "]"
+                reranked = json.loads(raw_output)
+            except Exception as e:
+                print(f"JSON parse error (adhoc Task B): {e}")
+
+        if not reranked:
+            reranked = [{"id": c["id"], "name": c["name"], "rank": i + 1,
+                         "explanation": "Recommended on semantic profile similarity."}
+                        for i, c in enumerate(candidates[:5])]
+
+        cand_map = {c["id"]: c for c in candidates}
+        enriched = []
+        for it in reranked:
+            try:
+                iid = int(it.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if iid in cand_map:
+                c = cand_map[iid]
+                enriched.append({
+                    "id": iid, "name": c["name"], "category": c["category"],
+                    "description": c["description"], "average_rating": c["average_rating"],
+                    "similarity": c["similarity"], "rank": len(enriched) + 1,
+                    "explanation": it.get("explanation", "Recommended on profile similarity."),
+                })
+
+        final = self.apply_critic_rules(enriched, persona)
+        return final[:top_k]
+
+    # =====================================================================
     # DEVELOPMENT Fallbacks (Zero-dependencies testing)
     # =====================================================================
 
