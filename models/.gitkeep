@@ -1,0 +1,3 @@
+# Keeps the models/ directory present in a fresh git clone so the Dockerfile's
+# `COPY models /app/models` works. The model weights themselves are gitignored
+# (too large for git); downloader.py fetches whatever is missing at build time.

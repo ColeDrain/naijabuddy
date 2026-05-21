@@ -18,9 +18,10 @@ env/
 *.db-shm
 *.db-wal
 
-# Large Model files, weights, and caches (important to avoid pushing heavy 2.2GB files to Git)
-models/
-/models/
+# Large model files & weights — too big for git, but keep the directory itself
+# (via models/.gitkeep) so the Dockerfile's `COPY models` works on a fresh clone.
+models/*
+!models/.gitkeep
 
 # Articles and retrieved PDFs
 articles/

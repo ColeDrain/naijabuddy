@@ -23,8 +23,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Local model weights — the build re-downloads them inside downloader.py
-models/
+# Incomplete Hugging Face scratch caches. The finalized model weights — the
+# .gguf and the embedding-model snapshots — ARE sent in the build context so
+# the build copies them in instead of re-downloading ~2.2 GB.
+models/.cache/
+models/hf_home/xet/
 
 # Local SQLite database — the build re-seeds it inside data_enricher.py
 naijabuddy.db
