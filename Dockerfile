@@ -72,8 +72,6 @@ RUN python generate_personas.py
 # STAGE 2: Lightweight Runtime Runner Stage
 FROM python:3.11-slim AS runner
 
-WORKDIR /app
-
 # llama-cpp-python's libllama.so links the OpenMP runtime at run time. The slim
 # base image does not ship it (the builder stage only had it via build-essential),
 # so without this the GGUF LLM silently fails to load and the agent drops to
@@ -81,30 +79,42 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy system site-packages compiled from builder
+# Copy system site-packages and entry-point scripts from the builder. These live
+# under /usr/local, are read-only at runtime and stay root-owned (Python only
+# needs read access), so they are copied while the stage is still root.
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy cached models directory and pre-seeded database from builder
-COPY --from=builder /app/models /app/models
-COPY --from=builder /app/naijabuddy.db /app/naijabuddy.db
+# Hugging Face Spaces run the container as user ID 1000. Create that user and
+# give it ownership of /app so SQLite can write naijabuddy.db plus its WAL /
+# journal sidecar files at runtime — a root-owned /app would be read-only to the
+# UID-1000 process ("attempt to write a readonly database"). This also makes the
+# runtime non-root, which is good practice for local `docker run` too.
+RUN useradd -m -u 1000 user && mkdir -p /app && chown user:user /app
+WORKDIR /app
+USER user
 
-# Copy web-client and static assets
-COPY static /app/static
+# Copy the cached models and the pre-seeded database, owned by the runtime user.
+# `--chown` sets ownership during the copy; a recursive `chown -R` afterwards
+# would duplicate the entire ~2 GB models layer into the image.
+COPY --chown=user --from=builder /app/models /app/models
+COPY --chown=user --from=builder /app/naijabuddy.db /app/naijabuddy.db
 
-# Copy database, agent, and runner code
-COPY database.py /app/database.py
-COPY agent.py /app/agent.py
-COPY app.py /app/app.py
+# Copy the web UI, static assets and runner code, owned by the runtime user.
+COPY --chown=user static /app/static
+COPY --chown=user database.py /app/database.py
+COPY --chown=user agent.py /app/agent.py
+COPY --chown=user app.py /app/app.py
 
 # Set configuration environment variables
 ENV PORT=8000 \
     PYTHONUNBUFFERED=1 \
+    HOME=/home/user \
     HF_HOME=/app/models/hf_home \
     SENTENCE_TRANSFORMERS_HOME=/app/models/sentence_transformers \
     NAIJABUDDY_ALPHA=0.3
 
-# Expose web server port
+# Expose web server port (matches `app_port: 8000` in the Space README.md)
 EXPOSE 8000
 
 # Run Uvicorn server serving FastAPI on 0.0.0.0 for docker ingress routing
