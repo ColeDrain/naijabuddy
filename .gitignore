@@ -38,3 +38,12 @@ bruno/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Scratch / throwaway experiment workspace
+scratch/
+
+# LLM evaluation artifact cache
+eval_artifacts/
+
+# Log files
+*.log
