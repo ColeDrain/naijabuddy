@@ -225,10 +225,22 @@ def seed_data():
         info["description"] = description
         info["avg_rating"] = sum(info["ratings"]) / len(info["ratings"])
         
-        # Deduplication check: if name is seen in another domain/category, append differentiator
-        name = info["name"]
-        if name in seen_names and seen_names[name] != domain:
-            name = f"{name} ({info['category']})"
+        # Every distinct source item must get a distinct DB name. The items
+        # table has `name UNIQUE`, but dataset item names are NOT unique —
+        # chains share one name across many business_ids. Without disambiguating
+        # *every* collision (the old code only handled cross-domain ones),
+        # same-name items collapse into a single row and the UNIQUE(user,item)
+        # constraint then silently drops every rating on the collapsed
+        # duplicates — this alone cut seeded Yelp interactions ~5x. Suffix any
+        # collision with a short id fragment so each item_id keeps its own row.
+        base_name = info["name"] or f"{domain} item {item_id[:8]}"
+        name = base_name
+        if name in seen_names:
+            name = f"{base_name} [{item_id[:6]}]"
+            n = 2
+            while name in seen_names:
+                name = f"{base_name} [{item_id[:6]}-{n}]"
+                n += 1
         seen_names[name] = domain
         info["unique_name"] = name
         
