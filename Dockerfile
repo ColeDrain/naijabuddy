@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency resolution
@@ -26,7 +27,31 @@ RUN uv pip install --system --no-cache-dir \
     pydantic==2.13.4 \
     sentence-transformers==5.5.0 \
     huggingface-hub==1.15.0 \
-    llama-cpp-python==0.3.7
+    llama-cpp-python==0.3.7 \
+    duckdb==1.1.3
+
+# Copy schema, seeder, downloader, persona generator and the dense datasets.
+# data/ holds the pre-densified CSVs that data_enricher.py ingests, so it must
+# be present in the build context (committed to git).
+COPY database.py /app/database.py
+COPY agent.py /app/agent.py
+COPY downloader.py /app/downloader.py
+COPY fetch_real_data.py /app/fetch_real_data.py
+COPY data_enricher.py /app/data_enricher.py
+COPY generate_personas.py /app/generate_personas.py
+COPY data /app/data
+
+# Download and pre-cache models during build phase
+ENV HF_HOME=/app/models/hf_home \
+    SENTENCE_TRANSFORMERS_HOME=/app/models/sentence_transformers
+RUN python downloader.py
+
+# Ingest + seed the catalogue, then pre-synthesize all user personas, at build
+# time. generate_personas.py reuses agent.synthesize_and_update_persona() so
+# there is a single synthesis implementation.
+RUN python data_enricher.py
+RUN python generate_personas.py
+
 
 # STAGE 2: Lightweight Runtime Runner Stage
 FROM python:3.11-slim AS runner
@@ -37,22 +62,17 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy cached models directory
-# Note: This ensures the 100% offline requirement works as weights are pre-baked
-COPY models /app/models
+# Copy cached models directory and pre-seeded database from builder
+COPY --from=builder /app/models /app/models
+COPY --from=builder /app/naijabuddy.db /app/naijabuddy.db
 
 # Copy web-client and static assets
 COPY static /app/static
 
-# Copy SQLite database schema, seeder and agent code
+# Copy database, agent, and runner code
 COPY database.py /app/database.py
 COPY agent.py /app/agent.py
 COPY app.py /app/app.py
-COPY downloader.py /app/downloader.py
-COPY data_enricher.py /app/data_enricher.py
-
-# Copy pre-seeded SQLite database file for instant warm start
-COPY naijabuddy.db /app/naijabuddy.db
 
 # Set configuration environment variables
 ENV PORT=8000 \

@@ -41,6 +41,12 @@ def download_models():
     embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
     print("BGE-Small embedding model successfully cached!")
     
+    # 3b. Download MiniLM Baseline Embedding Model
+    print("\n--- 1b. Caching Baseline Embedding Model: sentence-transformers/all-MiniLM-L6-v2 ---")
+    print("Fetching MiniLM model weights...")
+    minilm = SentenceTransformer("all-MiniLM-L6-v2")
+    print("MiniLM embedding model successfully cached!")
+    
     # 4. Download local GGUF LLM Model
     # We use Qwen2.5-3B-Instruct-GGUF (Q4_K_M) which is incredibly fast on M1 Mac and fits inside ~2.2GB.
     print("\n--- 2. Caching Local LLM GGUF: Qwen2.5-3B-Instruct (Q4_K_M) ---")

@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import sys
 
 # Configure isolated model environment variables BEFORE importing SentenceTransformer
@@ -8,11 +9,62 @@ os.environ["HF_HOME"] = os.path.join(MODELS_DIR, "hf_home")
 os.environ["SENTENCE_TRANSFORMERS_HOME"] = os.path.join(MODELS_DIR, "sentence_transformers")
 
 import database
+import fetch_real_data
+
+def clean_str(val):
+    """Decodes bytes to string and strips spaces/removes nulls safely."""
+    if val is None:
+        return ""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="ignore").strip()
+    return str(val).strip()
+
+def generate_user_persona(domain, history, item_details):
+    """
+    Dynamically constructs a descriptive persona based on the user's rated items
+    and category preferences in the sample dataset, stripping explicit item names
+    to prevent BGE vector search dilution.
+    """
+    categories = []
+    reviews_summary = []
+    
+    for item_id, rating, review_text in history:
+        item_info = item_details.get((domain, item_id))
+        if item_info:
+            categories.append(item_info["category"])
+            if review_text.strip() and len(review_text) > 15:
+                reviews_summary.append(review_text.strip()[:100])
+                
+    # Get unique, clean categories and de-boilerplate them
+    unique_categories = []
+    for cat_str in categories:
+        for cat in cat_str.split(","):
+            c = cat.replace("Goodreads (", "").replace("Yelp (", "").replace("Amazon (", "").replace(")", "").strip()
+            if c and c not in unique_categories:
+                unique_categories.append(c)
+                
+    categories_str = ", ".join(unique_categories[:4]) if unique_categories else "general items"
+    
+    persona = f"A real {domain} user interested in {categories_str}."
+    if reviews_summary:
+        snippet = " | ".join(reviews_summary[:2])
+        persona += f" Expressed reviews: '{snippet}...'"
+        
+    return persona
 
 def seed_data():
     print("=" * 60)
     print("NAIJABUDDY DATABASE DATA SEEDER")
     print("=" * 60)
+    
+    # Drop existing tables to start fresh cleanly
+    print("Dropping existing tables to start fresh...")
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    for table in ["ratings", "users", "items"]:
+        cursor.execute(f"DROP TABLE IF EXISTS {table}")
+    conn.commit()
+    conn.close()
     
     # 1. Initialize SQLite tables
     print("Initializing SQLite database tables...")
@@ -32,10 +84,211 @@ def seed_data():
     print("Model loaded successfully!")
     
     # =====================================================================
-    # NAIJA-ENRICHED CATALOG ITEMS
+    # STREAM AND INGEST REAL-WORLD DATASETS
     # =====================================================================
-    # We define high-fidelity, descriptive items across Yelp, Amazon, and Goodreads.
-    # Each item includes a name, category, domain, description, and base average rating.
+    print("\n" + "-" * 50)
+    print("PART 1: STREAMING REAL-WORLD DATASETS")
+    print("-" * 50)
+    
+    yelp_records = fetch_real_data.fetch_yelp_data(limit_users=100)
+    goodreads_records = fetch_real_data.fetch_goodreads_data(limit_users=100)
+    amazon_records = fetch_real_data.fetch_amazon_data(limit_users=100)
+    
+    raw_records = []
+    
+    # Yelp Mapping
+    for r in yelp_records:
+        user_id = clean_str(r[0])
+        item_id = clean_str(r[1])
+        item_name = clean_str(r[2])
+        category = clean_str(r[3])
+        rating = float(r[4])
+        review_text = clean_str(r[5])
+        raw_records.append((user_id, item_id, item_name, category, "Yelp", rating, review_text))
+        
+    # Goodreads Mapping
+    for r in goodreads_records:
+        user_id = clean_str(r[0])
+        item_id = clean_str(r[1])
+        item_name = clean_str(r[2])
+        category = clean_str(r[3])
+        rating = float(r[4])
+        review_text = clean_str(r[5])
+        raw_records.append((user_id, item_id, item_name, category, "Goodreads", rating, review_text))
+        
+    # Amazon Mapping
+    for r in amazon_records:
+        user_id = clean_str(r[0])
+        item_id = clean_str(r[1])
+        item_name = clean_str(r[2])
+        category = clean_str(r[3])
+        rating = float(r[4])
+        review_text = clean_str(r[5])
+        raw_records.append((user_id, item_id, item_name, category, "Amazon", rating, review_text))
+        
+    # Group unique items to calculate average ratings and compile descriptions
+    print("Processing unique items and compiling reviews as descriptions...")
+    item_details = {}
+    for user_id, item_id, item_name, category, domain, rating, review_text in raw_records:
+        key = (domain, item_id)
+        if key not in item_details:
+            item_details[key] = {
+                "name": item_name,
+                "category": category,
+                "ratings": [],
+                "reviews": []
+            }
+        item_details[key]["ratings"].append(rating)
+        if review_text.strip():
+            item_details[key]["reviews"].append(review_text)
+            
+    # Process unique users to compile history for persona generation
+    print("Processing unique users and compiling interaction history...")
+    user_details = {} # (domain, user_id) -> list of (item_id, rating, review_text)
+    for user_id, item_id, item_name, category, domain, rating, review_text in raw_records:
+        key = (domain, user_id)
+        if key not in user_details:
+            user_details[key] = []
+        user_details[key].append((item_id, rating, review_text))
+        
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    
+    # Seeding Real Items with Deduplication / Suffix for collisions
+    print(f"\nEncoding and seeding {len(item_details)} unique real-world items...")
+    db_item_ids = {} # (domain, item_id) -> SQLite integer ID
+    
+    item_keys = list(item_details.keys())
+    item_texts = []
+    seen_names = {} # name -> domain
+    
+    for key in item_keys:
+        info = item_details[key]
+        domain, item_id = key
+        
+        # Compile description from review snippets
+        reviews_summary = " ".join(info["reviews"][:3])[:300]
+        if reviews_summary:
+            description = f"Real-world {domain} item categorized under {info['category']}. Customer reviews state: '{reviews_summary}...'"
+        else:
+            description = f"Real-world {domain} item categorized under {info['category']}."
+            
+        info["description"] = description
+        info["avg_rating"] = sum(info["ratings"]) / len(info["ratings"])
+        
+        # Deduplication check: if name is seen in another domain/category, append differentiator
+        name = info["name"]
+        if name in seen_names and seen_names[name] != domain:
+            name = f"{name} ({info['category']})"
+        seen_names[name] = domain
+        info["unique_name"] = name
+        
+        # Build text string to represent semantic content of the item for embedding
+        embedding_text = f"{name} - {info['category']}. {description}"
+        item_texts.append(embedding_text)
+        
+    print(f"Generating embeddings for {len(item_texts)} items...")
+    embeddings = embedder.encode(item_texts, show_progress_bar=True).tolist()
+    
+    for idx, key in enumerate(item_keys):
+        info = item_details[key]
+        domain, item_id = key
+        embedding = embeddings[idx]
+        name = info["unique_name"]
+        
+        try:
+            cursor.execute("""
+                INSERT INTO items (name, category, domain, description, average_rating, embedding)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                name,
+                info["category"],
+                domain,
+                info["description"],
+                info["avg_rating"],
+                json.dumps(embedding)
+            ))
+            db_id = cursor.lastrowid
+            db_item_ids[key] = db_id
+        except sqlite3.IntegrityError:
+            cursor.execute("SELECT id FROM items WHERE name = ?", (name,))
+            row = cursor.fetchone()
+            db_item_ids[key] = row[0] if row else None
+            
+    conn.commit()
+    
+    # Seeding Real Users with dynamic personas
+    print(f"\nGenerating dynamic personas for {len(user_details)} unique real-world users...")
+    db_user_ids = {} # (domain, user_id) -> SQLite integer ID
+    
+    user_keys = list(user_details.keys())
+    user_personas = []
+    
+    for key in user_keys:
+        domain, user_id = key
+        history = user_details[key]
+        persona = generate_user_persona(domain, history, item_details)
+        user_personas.append(persona)
+        
+    print(f"Generating embeddings for {len(user_personas)} user personas...")
+    user_embeddings = embedder.encode(user_personas, show_progress_bar=True).tolist()
+    
+    for idx, key in enumerate(user_keys):
+        domain, user_id = key
+        user_name = f"{domain} User {user_id[:8]}"
+        ratings_only = [item[1] for item in user_details[key]]
+        user_mean_rating = sum(ratings_only) / len(ratings_only)
+        embedding = user_embeddings[idx]
+        persona = user_personas[idx]
+        
+        try:
+            cursor.execute("""
+                INSERT INTO users (name, persona, user_mean_rating, persona_embedding)
+                VALUES (?, ?, ?, ?)
+            """, (
+                user_name,
+                persona,
+                user_mean_rating,
+                json.dumps(embedding)
+            ))
+            db_id = cursor.lastrowid
+            db_user_ids[key] = db_id
+        except sqlite3.IntegrityError:
+            cursor.execute("SELECT id FROM users WHERE name = ?", (user_name,))
+            row = cursor.fetchone()
+            db_user_ids[key] = row[0] if row else None
+            
+    conn.commit()
+    
+    # Seeding Real Ratings
+    print("\nSeeding real-world ratings matrix...")
+    seeded_ratings_count = 0
+    for user_id, item_id, item_name, category, domain, rating, review_text in raw_records:
+        u_key = (domain, user_id)
+        i_key = (domain, item_id)
+        
+        db_user_id = db_user_ids.get(u_key)
+        db_item_id = db_item_ids.get(i_key)
+        
+        if db_user_id and db_item_id:
+            try:
+                cursor.execute("""
+                    INSERT INTO ratings (user_id, item_id, rating, review_text)
+                    VALUES (?, ?, ?, ?)
+                """, (db_user_id, db_item_id, rating, review_text))
+                seeded_ratings_count += 1
+            except sqlite3.IntegrityError:
+                continue
+                
+    conn.commit()
+    print(f"Successfully seeded {seeded_ratings_count} real-world rating rows.")
+    
+    # =====================================================================
+    # NAIJA-ENRICHED LOCAL CATALOG OVERLAY
+    # =====================================================================
+    print("\n" + "-" * 50)
+    print("PART 2: SEEDING NAIJA-ENRICHED LOCAL CATALOG")
+    print("-" * 50)
     
     catalog_items = [
         # --- YELP DOMAIN (Restaurants, Bars, Spots) ---
@@ -157,13 +410,8 @@ def seed_data():
         }
     ]
     
-    # Insert items into database
-    conn = database.get_connection()
-    cursor = conn.cursor()
-    
-    print("\nEncoding and seeding catalog items...")
+    print("Encoding and seeding local catalog items...")
     for item in catalog_items:
-        # Build text string to represent semantic content of the item for embedding
         embedding_text = f"{item['name']} - {item['category']}. {item['description']}"
         embedding = embedder.encode(embedding_text).tolist()
         
@@ -179,18 +427,13 @@ def seed_data():
                 item["average_rating"],
                 json.dumps(embedding)
             ))
-            print(f"  [Item] Seeded: {item['name']}")
+            print(f"  [Local Item] Seeded: {item['name']}")
         except sqlite3.IntegrityError:
-            # Item already exists, skip
             continue
             
     conn.commit()
     
-    # =====================================================================
-    # HIGH-FIDELITY USER PERSONAS
-    # =====================================================================
-    # We define our target Nigerian archetypes.
-    
+    # User personas
     users = [
         {
             "name": "Kunle (VI Tech Bro)",
@@ -209,7 +452,7 @@ def seed_data():
         }
     ]
     
-    print("\nEncoding and seeding user personas...")
+    print("\nEncoding and seeding local user personas...")
     for user in users:
         embedding = embedder.encode(user["persona"]).tolist()
         try:
@@ -222,24 +465,18 @@ def seed_data():
                 user["user_mean_rating"],
                 json.dumps(embedding)
             ))
-            print(f"  [User] Seeded: {user['name']}")
+            print(f"  [Local User] Seeded: {user['name']}")
         except sqlite3.IntegrityError:
             continue
             
     conn.commit()
     
-    # =====================================================================
-    # HISTORICAL USER-ITEM RATINGS (WARM START SEEDING)
-    # =====================================================================
-    # We seed historical ratings to demonstrate both warm-user and cold-start math.
-    # Ratings align perfectly with user personas to ensure logical baseline averages.
-    
-    # Fetch user/item IDs from database
+    # Re-fetch local user/item IDs from database to overlay historical ratings
     cursor.execute("SELECT id, name FROM users")
-    user_ids = {row["name"]: row["id"] for row in cursor.fetchall()}
+    db_users = {row["name"]: row["id"] for row in cursor.fetchall()}
     
     cursor.execute("SELECT id, name FROM items")
-    item_ids = {row["name"]: row["id"] for row in cursor.fetchall()}
+    db_items = {row["name"]: row["id"] for row in cursor.fetchall()}
     
     historical_ratings = [
         # --- Kunle (VI Tech Bro) Ratings ---
@@ -294,44 +531,44 @@ def seed_data():
             "review": "Extremely overpriced and the food portions are tiny. I do not understand why our children buy small slices of raw cold fish for the price of a full goat. Ambiance is okay, but too dark."
         },
         
-        # --- Teni (Gen-Z Influencer) Ratings ---
+        # --- Teni (Lagos Gen-Z Influencer) Ratings ---
         {
-            "user": "Teni (Gen-Z Influencer)",
+            "user": "Teni (Lagos Gen-Z Influencer)",
             "item": "Club Quilox (Victoria Island)",
             "rating": 5.0,
             "review": "Omo! The energy at Quilox is absolutely top-tier! Afrobeats was hitting different and the aesthetics are giving premium luxury. God when will I meet my billionaire husband here? 10/10!"
         },
         {
-            "user": "Teni (Gen-Z Influencer)",
+            "user": "Teni (Lagos Gen-Z Influencer)",
             "item": "The Wedding Party (Nollywood Movie)",
             "rating": 5.0,
             "review": "This movie had me crying laughing! It is literally my family in a wedding. The mothers are so extra, the drama is giving pure chaotic Nigerian wedding vibes. Obsessed!"
         },
         {
-            "user": "Teni (Gen-Z Influencer)",
+            "user": "Teni (Lagos Gen-Z Influencer)",
             "item": "The Place Restaurant (Yaba)",
             "rating": 3.0,
             "review": "The Jollof is decent, but the queue and noise? Absolute wahala. Not aesthetic at all, do not come here if you want to take Instagram pictures. Just buy and leave."
         }
     ]
     
-    print("\nSeeding historical rating matrix...")
+    print("\nSeeding local historical rating matrix...")
     for rating in historical_ratings:
         user_name = rating["user"]
         item_name = rating["item"]
         
-        if user_name not in user_ids or item_name not in item_ids:
+        if user_name not in db_users or item_name not in db_items:
             continue
             
-        user_id = user_ids[user_name]
-        item_id = item_ids[item_name]
+        user_id = db_users[user_name]
+        item_id = db_items[item_name]
         
         try:
             cursor.execute("""
                 INSERT INTO ratings (user_id, item_id, rating, review_text)
                 VALUES (?, ?, ?, ?)
             """, (user_id, item_id, rating["rating"], rating["review"]))
-            print(f"  [Rating] {user_name} -> {item_name} ({rating['rating']} stars)")
+            print(f"  [Local Rating] {user_name} -> {item_name} ({rating['rating']} stars)")
         except sqlite3.IntegrityError:
             continue
             

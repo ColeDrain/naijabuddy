@@ -4,8 +4,8 @@ import sys
 
 # Configure environment variables to find cached model folders
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-os.environ["HF_HOME"] = os.path.join(MODELS_DIR, "hf_home")
-os.environ["SENTENCE_TRANSFORMERS_HOME"] = os.path.join(MODELS_DIR, "sentence_transformers")
+os.environ.setdefault("HF_HOME", os.path.join(MODELS_DIR, "hf_home"))
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", os.path.join(MODELS_DIR, "sentence_transformers"))
 
 import database
 
@@ -20,20 +20,44 @@ class NaijaBuddyAgent:
         
         # Determine the GGUF path
         if not model_path:
-            model_path = os.path.join(MODELS_DIR, "qwen2.5-3b-instruct-q4_k_m.gguf")
+            model_path = os.getenv("NAIJABUDDY_MODEL_PATH") or os.path.join(MODELS_DIR, "qwen2.5-3b-instruct-q4_k_m.gguf")
             
         if os.path.exists(model_path):
             try:
                 print(f"Loading local GGUF LLM from: {model_path}...")
                 from llama_cpp import Llama
-                # Initialize model with 2048 context size to prevent truncation
-                self.llm = Llama(
-                    model_path=model_path,
-                    n_ctx=2048,
-                    n_threads=4,      # Optimized for typical multi-core CPU inside Docker
-                    verbose=False
-                )
-                print("Local GGUF LLM successfully loaded with Speculative Decoding!")
+                
+                # Attempt to initialize with macOS Metal GPU offloading & Flash Attention for 6x speedup
+                # Attempt to initialize with GPU offloading
+                try:
+                    try:
+                        self.llm = Llama(
+                            model_path=model_path,
+                            n_ctx=2048,
+                            n_gpu_layers=-1,
+                            flash_attn=True,
+                            verbose=False
+                        )
+                        print("Local GGUF LLM loaded with GPU acceleration and Flash Attention!")
+                    except Exception as fa_err:
+                        print(f"GPU initialization with Flash Attention failed ({fa_err}). Trying GPU without Flash Attention...")
+                        self.llm = Llama(
+                            model_path=model_path,
+                            n_ctx=2048,
+                            n_gpu_layers=-1,
+                            flash_attn=False,
+                            verbose=False
+                        )
+                        print("Local GGUF LLM loaded with GPU acceleration (no Flash Attention)!")
+                except Exception as gpu_err:
+                    print(f"GPU initialization failed ({gpu_err}), falling back to CPU baseline...")
+                    self.llm = Llama(
+                        model_path=model_path,
+                        n_ctx=2048,
+                        n_threads=4,
+                        verbose=False
+                    )
+                    print("Local GGUF LLM loaded on CPU baseline.")
             except Exception as e:
                 print(f"Warning: Failed to load llama-cpp-python or GGUF: {e}")
                 print("Agent will run in 'Mock-Fallback' mode for development UI testing.")
@@ -126,6 +150,94 @@ class NaijaBuddyAgent:
         cleaned_items.sort(key=lambda x: 1 if x.get("critic_penalty") else 0)
         return cleaned_items
 
+    def synthesize_and_update_persona(self, user):
+        """
+        Uses the LLM to synthesize a natural, coherent 2-sentence character profile
+        from the raw, structured interaction history, and caches it in SQLite.
+        """
+        print(f"  [Lazy Synthesis] Generating high-fidelity LLM persona for '{user['name']}'...")
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        
+        # Retrieve this user's historical ratings and reviews to summarize
+        cursor.execute("""
+            SELECT i.name, i.category, r.rating, r.review_text 
+            FROM ratings r
+            JOIN items i ON r.item_id = i.id
+            WHERE r.user_id = ?
+        """, (user["id"],))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return user
+            
+        # Cap the history fed to the LLM so the synthesis prompt stays within
+        # the context window regardless of how long a user's history is. For
+        # long histories we keep the most opinionated ratings (highest and
+        # lowest) so the synthesised persona captures the user's taste range.
+        MAX_HISTORY = 15
+        if len(rows) > MAX_HISTORY:
+            ordered = sorted(rows, key=lambda r: r["rating"])
+            low = ordered[: MAX_HISTORY // 2]
+            high = ordered[-(MAX_HISTORY - len(low)):]
+            rows = high + low
+
+        # Formulate history narrative
+        history_lines = []
+        for r in rows:
+            review = (r["review_text"] or "").strip().replace("\n", " ")
+            if len(review) > 200:
+                review = review[:200] + "..."
+            history_lines.append(f"- Item: {r['name']} ({r['category']}) | Rating: {r['rating']}/5 | Review: '{review}'")
+        history_str = "\n".join(history_lines)
+        
+        prompt = f"""<|im_start|>system
+You are a expert user profiling assistant. Your goal is to synthesize a cohesive, natural, and concise 2-sentence description of a user's tastes and expectations based on their review history.
+Write in a fluent, natural character description style (e.g., 'An avid reader who appreciates deep historical context...'). Do not use rigid templates or list items.
+
+USER REVIEWS & RATING HISTORY:
+{history_str}
+
+OUTPUT FORMAT:
+Return ONLY the 2-sentence persona. No markdown backticks, JSON, or extra conversational text.
+<|im_end|>
+<|im_start|>assistant
+"""
+        synthesized = user["persona"]
+        if self.llm:
+            try:
+                response = self.llm(prompt, max_tokens=192, temperature=0.3)
+                synthesized = response["choices"][0]["text"].strip()
+            except Exception as e:
+                print(f"  [Lazy Synthesis] LLM inference failed: {e}")
+                
+        # Generate new vector embedding for the synthesized persona
+        if not hasattr(self, "embedder"):
+            from sentence_transformers import SentenceTransformer
+            self.embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+            
+        print(f"  [Lazy Embedding] Generating new embedding vector for synthesized persona...")
+        new_embedding = self.embedder.encode(synthesized).tolist()
+        
+        # Save cache to SQLite database
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users 
+            SET persona = ?, persona_embedding = ? 
+            WHERE id = ?
+        """, (synthesized, json.dumps(new_embedding), user["id"]))
+        conn.commit()
+        conn.close()
+        print(f"  [Lazy Synthesis] Successfully updated database cache for '{user['name']}'!")
+        
+        # Return updated user dictionary
+        updated_user = dict(user)
+        updated_user["persona"] = synthesized
+        updated_user["persona_embedding"] = json.dumps(new_embedding)
+        return updated_user
+
     # =====================================================================
     # TASK A: REVIEW SIMULATION ENGINE
     # =====================================================================
@@ -135,6 +247,9 @@ class NaijaBuddyAgent:
         # 1. Fetch user and item details from database
         user = database.get_user_by_name(user_name)
         
+        if user and user["persona"].startswith("A real "):
+            user = self.synthesize_and_update_persona(user)
+            
         conn = database.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,))
@@ -204,6 +319,17 @@ Return ONLY a valid JSON object. Do not include any markdown backticks or extra 
             review_text = "Standard review text."
             
         # 4. Apply Output Calibration Layer (Mathematically adjust the score)
+        if alpha is None:
+            domain_lower = item.get("domain", "").lower()
+            if "yelp" in domain_lower:
+                alpha = 0.3
+            elif "goodreads" in domain_lower:
+                alpha = 0.1
+            elif "amazon" in domain_lower:
+                alpha = 0.2
+            else:
+                alpha = self.alpha
+
         calibrated_rating = self.get_calibrated_rating(
             raw_llm_rating=raw_rating,
             user_id=user["id"],
@@ -235,12 +361,15 @@ Return ONLY a valid JSON object. Do not include any markdown backticks or extra 
         if not user:
             return {"error": f"User persona '{user_name}' not found."}
             
+        if user["persona"].startswith("A real "):
+            user = self.synthesize_and_update_persona(user)
+            
         t1 = time.time()
         print(f"[{user_name}] User retrieved in {t1 - start_time:.4f}s")
         
-        # 2. Stage-1 Recall: Dense semantic vector search (retrieves 10 candidates)
+        # 2. Stage-1 Recall: Dense semantic vector search with Hybrid Retrieval (retrieves 10 candidates)
         user_embedding = json.loads(user["persona_embedding"])
-        candidates = database.get_nearest_items(user_embedding, domain, top_k=10)
+        candidates = database.get_nearest_items(user_embedding, domain, top_k=10, user_id=user["id"])
         
         t2 = time.time()
         print(f"[{user_name}] Stage-1 Recall (Vector Search) finished in {t2 - t1:.4f}s")
@@ -270,7 +399,7 @@ CANDIDATE LIST OF ITEMS (Top 10 from Semantic Search):
 CRITICAL CONSTRAINTS:
 1. Select the top 5 most relevant items from the 10 candidates and rank them from 1 (most relevant) to 5 (fifth most relevant).
 2. Filter out any candidate items that violate strict user constraints (e.g., recommending pork or beef to a strict vegetarian, or loud parties to an introverted parent).
-3. For each of the top 5 selected items, provide a persuasive, short (1-2 sentences) natural language explanation of WHY this was recommended to this persona. Highlight the exact features of the item that match the persona's core tastes.
+3. For each of the top 5 selected items, provide a persuasive, extremely concise (exactly 1 sentence, maximum 15 words) natural language explanation of WHY this was recommended to this persona. Highlight the exact features of the item that match the persona's core tastes.
 4. Adjust your explanation tone to sound authentic to the user's cultural context (Nigeria).
 
 OUTPUT FORMAT (Strict JSON):
@@ -280,7 +409,7 @@ Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra te
     "id": [item_id],
     "name": "[item_name]",
     "rank": [1 to 5],
-    "explanation": "[Write your persuasive explanation here]"
+    "explanation": "[Write your short explanation here]"
   }},
   ...
 ]
@@ -293,7 +422,7 @@ Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra te
         t3 = time.time()
         if self.llm:
             try:
-                response = self.llm(prompt, max_tokens=768, temperature=0.1)
+                response = self.llm(prompt, max_tokens=1024, temperature=0.1)
                 raw_output = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"Llama-cpp inference error: {e}. Falling back to mock reranker...")
@@ -304,10 +433,25 @@ Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra te
         t4 = time.time()
         print(f"[{user_name}] Stage-2 Rerank (LLM Inference) finished in {t4 - t3:.4f}s")
             
-        # Parse output JSON array
+        # Parse output JSON array (with truncated JSON repair defense)
         try:
             if "```" in raw_output:
                 raw_output = raw_output.split("```json")[-1].split("```")[0].strip()
+            
+            # Defensive JSON repair: check if JSON is truncated (starts with [ but doesn't end with ])
+            if raw_output.startswith("[") and not raw_output.endswith("]"):
+                cleaned = raw_output.strip()
+                if cleaned.endswith("}"):
+                    cleaned += "]"
+                    raw_output = cleaned
+                else:
+                    # Find the last occurrence of } to discard any incomplete trailing object
+                    last_brace = cleaned.rfind("}")
+                    if last_brace != -1:
+                        cleaned = cleaned[:last_brace+1] + "]"
+                        raw_output = cleaned
+                        print(f"  [JSON Repair] Repaired truncated raw LLM response. Cleaned content ends at index {last_brace}.")
+                        
             reranked_list = json.loads(raw_output)
         except Exception as e:
             print(f"JSON parsing error on Rerank output: {e}. Raw content: {raw_output}")
