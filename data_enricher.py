@@ -1,7 +1,10 @@
+import hashlib
 import json
 import os
 import sqlite3
 import sys
+
+import numpy as np
 
 # Configure isolated model environment variables BEFORE importing SentenceTransformer
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
@@ -10,6 +13,12 @@ os.environ["SENTENCE_TRANSFORMERS_HOME"] = os.path.join(MODELS_DIR, "sentence_tr
 
 import database
 import fetch_real_data
+
+# Cached catalogue item embeddings (built by analysis/export_item_embeddings.py).
+# Item texts are deterministic from the committed CSVs, so the BGE pass over
+# ~15k items is a one-time cost: generated once, committed, loaded thereafter.
+ITEM_EMB_ARTIFACT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "data", "item_embeddings.npz")
 
 def clean_str(val):
     """Decodes bytes to string and strips spaces/removes nulls safely."""
@@ -51,6 +60,46 @@ def generate_user_persona(domain, history, item_details):
         persona += f" Expressed reviews: '{snippet}...'"
         
     return persona
+
+
+def embed_items(embedder, item_texts):
+    """
+    Embed item texts, reusing data/item_embeddings.npz where available.
+
+    Item texts are deterministic from the committed CSVs, so on the shipped
+    dataset nearly every embedding is a cache hit and the multi-minute BGE pass
+    is skipped. Anything not cached is embedded and folded back into the
+    artifact. Mirrors the generate-once / commit / load pattern already used
+    for the personas and the dense datasets.
+    """
+    cache = {}
+    if os.path.exists(ITEM_EMB_ARTIFACT):
+        data = np.load(ITEM_EMB_ARTIFACT, allow_pickle=False)
+        keys, vectors = data["keys"], data["vectors"]  # decompress each array once
+        cache = {str(k): vectors[i] for i, k in enumerate(keys)}
+        print(f"  loaded {len(cache)} cached item embeddings from "
+              f"{os.path.relpath(ITEM_EMB_ARTIFACT)}")
+
+    hashes = [hashlib.sha256(t.encode("utf-8")).hexdigest() for t in item_texts]
+    missing = [i for i, h in enumerate(hashes) if h not in cache]
+
+    if missing:
+        print(f"  embedding {len(missing)} uncached item(s) with BGE...")
+        fresh = embedder.encode([item_texts[i] for i in missing],
+                                show_progress_bar=True)
+        for j, i in enumerate(missing):
+            cache[hashes[i]] = np.asarray(fresh[j], dtype=np.float32)
+        keys = list(cache.keys())
+        os.makedirs(os.path.dirname(ITEM_EMB_ARTIFACT), exist_ok=True)
+        np.savez_compressed(ITEM_EMB_ARTIFACT, keys=np.array(keys),
+                            vectors=np.stack([cache[k] for k in keys]))
+        print(f"  cached {len(keys)} item embeddings -> "
+              f"{os.path.relpath(ITEM_EMB_ARTIFACT)}")
+    else:
+        print(f"  all {len(item_texts)} item embeddings served from cache")
+
+    return [cache[h].astype(float).tolist() for h in hashes]
+
 
 def seed_data():
     print("=" * 60)
@@ -188,7 +237,7 @@ def seed_data():
         item_texts.append(embedding_text)
         
     print(f"Generating embeddings for {len(item_texts)} items...")
-    embeddings = embedder.encode(item_texts, show_progress_bar=True).tolist()
+    embeddings = embed_items(embedder, item_texts)
     
     for idx, key in enumerate(item_keys):
         info = item_details[key]
