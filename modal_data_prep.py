@@ -7,8 +7,12 @@ data/*_dense.csv files locally.
 
     modal run modal_data_prep.py --limit-users 2000
 
-This removes the manual Colab step: it runs entirely on Modal (a cheap
-CPU job — no GPU) and drops the new CSVs straight into ./data/.
+Differences from the original notebook:
+  * parquet shard URLs are resolved via the dataset-viewer API for *all*
+    domains (the notebook hardcoded a stale path for Yelp/Goodreads that now
+    404s);
+  * it reads across *all* shards with a large row LIMIT — one shard only
+    yielded ~340 dense users, far short of a 2k target.
 """
 import modal
 
@@ -18,8 +22,12 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "duckdb==1.1.3", "pandas", "requests", "pyarrow"
 )
 
+# How many raw review rows to stream per domain before densifying. A 3-core of
+# ~2M rows comfortably clears 2k dense users for every domain.
+RAW_LIMIT = 2_000_000
 
-@app.function(image=image, timeout=2400)
+
+@app.function(image=image, timeout=3600, cpu=4.0, memory=32768)
 def prepare_data(limit_users: int = 2000):
     """Stream, densify and pack the three dense CSVs; return a zip of them."""
     import duckdb, time, io, zipfile
@@ -36,6 +44,10 @@ def prepare_data(limit_users: int = 2000):
         )
         r.raise_for_status()
         return [f["url"] for f in r.json()["parquet_files"]]
+
+    def plist(urls):
+        """Render a python list of URLs as a DuckDB read_parquet([...]) arg."""
+        return "[" + ",".join(f"'{u}'" for u in urls) + "]"
 
     def stream_query(query, label):
         # Retry the whole query — a corrupted compressed chunk surfaces as a
@@ -73,7 +85,7 @@ def prepare_data(limit_users: int = 2000):
             df = keep
         return df
 
-    def densify(df, k=3, limit_users=limit_users, label=""):
+    def densify(df, k=3, limit_users=2000, label=""):
         if df.empty:
             print(f"  [{label}] empty input", flush=True)
             return df
@@ -96,42 +108,48 @@ def prepare_data(limit_users: int = 2000):
               flush=True)
         return core
 
-    YELP_SQL = """
+    # --- Resolve every dataset's parquet shards via the dataset-viewer API ---
+    print("Resolving parquet shard URLs ...", flush=True)
+    yelp_review = hf_parquet_urls("yashraizada/yelp-open-dataset-reviews")
+    yelp_biz = hf_parquet_urls("yashraizada/yelp-open-dataset-business")
+    gr_review = hf_parquet_urls("vngclinh/goodreads-reviews")
+    gr_meta = hf_parquet_urls("Eitanli/goodreads")
+    amz_review = hf_parquet_urls("cogsci13/Amazon-Reviews-2023-Books-Review")
+    amz_meta = hf_parquet_urls("cogsci13/Amazon-Reviews-2023-Books-Meta")
+    print(f"  shards — yelp:{len(yelp_review)} goodreads:{len(gr_review)} "
+          f"amazon:{len(amz_review)}", flush=True)
+
+    YELP_SQL = f"""
     WITH s AS (
       SELECT user_id, business_id, stars, text
-      FROM read_parquet('https://huggingface.co/api/datasets/yashraizada/yelp-open-dataset-reviews/parquet/default/train/0.parquet')
-      WHERE stars > 0 LIMIT 250000
+      FROM read_parquet({plist(yelp_review)})
+      WHERE stars > 0 LIMIT {RAW_LIMIT}
     )
     SELECT s.user_id AS user_id, s.business_id AS item_id, b.name AS item_name,
            b.categories AS category, s.stars AS rating, s.text AS review_text
-    FROM s JOIN read_parquet('https://huggingface.co/api/datasets/yashraizada/yelp-open-dataset-business/parquet/default/train/0.parquet') b
+    FROM s JOIN read_parquet({plist(yelp_biz)}) b
       ON s.business_id = b.business_id
     """
 
-    GOODREADS_SQL = """
+    GOODREADS_SQL = f"""
     WITH s AS (
       SELECT user_id, book_id, rating, review_text
-      FROM read_parquet('https://huggingface.co/api/datasets/vngclinh/goodreads-reviews/parquet/default/train/0.parquet')
-      WHERE rating > 0 LIMIT 250000
+      FROM read_parquet({plist(gr_review)})
+      WHERE rating > 0 LIMIT {RAW_LIMIT}
     )
     SELECT s.user_id AS user_id, s.book_id AS item_id,
            COALESCE(m.Book, 'Book #' || s.book_id) AS item_name,
            'Goodreads (Book)' AS category, s.rating AS rating, s.review_text AS review_text
-    FROM s LEFT JOIN read_parquet('https://huggingface.co/api/datasets/Eitanli/goodreads/parquet/default/train/0.parquet') m
+    FROM s LEFT JOIN read_parquet({plist(gr_meta)}) m
       ON s.book_id = regexp_extract(m.URL, '/book/show/([0-9]+)', 1)
     """
 
-    amz_review_urls = hf_parquet_urls("cogsci13/Amazon-Reviews-2023-Books-Review")
-    amz_meta_urls = hf_parquet_urls("cogsci13/Amazon-Reviews-2023-Books-Meta")
-    print(f"Amazon: {len(amz_review_urls)} review shards, "
-          f"{len(amz_meta_urls)} meta shards discovered", flush=True)
-    amz_meta_list = "[" + ",".join(f"'{u}'" for u in amz_meta_urls) + "]"
     AMAZON_SQL = f"""
     WITH s AS (
       SELECT user_id, parent_asin, rating, text
-      FROM read_parquet('{amz_review_urls[0]}')
+      FROM read_parquet({plist(amz_review)})
       WHERE rating > 0 AND user_id IS NOT NULL AND parent_asin IS NOT NULL
-      LIMIT 600000
+      LIMIT {RAW_LIMIT}
     )
     SELECT s.user_id AS user_id,
            s.parent_asin AS item_id,
@@ -140,16 +158,16 @@ def prepare_data(limit_users: int = 2000):
            s.rating AS rating,
            s.text AS review_text
     FROM s
-    LEFT JOIN (SELECT parent_asin, title FROM read_parquet({amz_meta_list})) m
+    LEFT JOIN (SELECT parent_asin, title FROM read_parquet({plist(amz_meta)})) m
       ON s.parent_asin = m.parent_asin
     """
 
     print("=== Yelp ===", flush=True)
-    yelp = densify(stream_query(YELP_SQL, "Yelp"), label="Yelp")
+    yelp = densify(stream_query(YELP_SQL, "Yelp"), limit_users=limit_users, label="Yelp")
     print("=== Goodreads ===", flush=True)
-    goodreads = densify(stream_query(GOODREADS_SQL, "Goodreads"), label="Goodreads")
+    goodreads = densify(stream_query(GOODREADS_SQL, "Goodreads"), limit_users=limit_users, label="Goodreads")
     print("=== Amazon (Books) ===", flush=True)
-    amazon = densify(stream_query(AMAZON_SQL, "Amazon"), label="Amazon")
+    amazon = densify(stream_query(AMAZON_SQL, "Amazon"), limit_users=limit_users, label="Amazon")
 
     COLS = ["user_id", "item_id", "item_name", "category", "rating", "review_text"]
     buf = io.BytesIO()
