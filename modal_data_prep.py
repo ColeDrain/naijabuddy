@@ -22,19 +22,21 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install(
 )
 
 
-@app.function(image=image, timeout=14400, cpu=4.0, memory=32768,
-              secrets=[modal.Secret.from_name("hf-token")])
-def prepare_data(limit_users: int = 2000, raw_limit: int = 2_000_000):
+@app.function(image=image, timeout=14400, cpu=4.0, memory=32768)
+def prepare_data(limit_users: int = 2000, raw_limit: int = 2_000_000,
+                 hf_token: str = ""):
     """Stream, densify and pack the three dense CSVs; return a zip of them."""
     import os, io, zipfile
     import pandas as pd
     from datasets import load_dataset, get_dataset_split_names
     from huggingface_hub import login
 
-    hf_token = os.environ.get("HF_TOKEN")
-    assert hf_token, "HF_TOKEN not in env (Modal hf-token secret missing)"
-    # Force authentication — without it HF rate-limits the streaming requests
-    # to a crawl ("unauthenticated requests" warning).
+    assert hf_token, "no HF token passed to prepare_data"
+    # The Modal `hf-token` secret holds a stale/invalid token, so the valid
+    # local token is passed in as an argument instead. Override the env var
+    # (HF_TOKEN takes precedence inside huggingface_hub) then authenticate —
+    # without auth, HF rate-limits the streaming requests to a crawl.
+    os.environ["HF_TOKEN"] = hf_token
     login(token=hf_token, add_to_git_credential=False)
     amz_meta_limit = min(1_500_000, raw_limit)
 
@@ -150,13 +152,34 @@ def prepare_data(limit_users: int = 2000, raw_limit: int = 2_000_000):
     return buf.getvalue()
 
 
+def _local_hf_token():
+    """Read the valid local HF token (never printed) — env var or hf-login file."""
+    import os
+    t = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if t and t.strip():
+        return t.strip()
+    for p in (os.path.expanduser("~/.cache/huggingface/token"),
+              os.path.join(os.environ.get("HF_HOME", ""), "token")):
+        try:
+            if p and os.path.exists(p):
+                v = open(p).read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+    return ""
+
+
 @app.local_entrypoint()
 def main(limit_users: int = 2000, raw_limit: int = 2_000_000):
     import io, os, zipfile
 
+    hf_token = _local_hf_token()
+    if not hf_token:
+        raise SystemExit("No local HF token found — run `hf auth login` first.")
     print(f"Running dense-dataset prep on Modal "
           f"(limit_users={limit_users}, raw_limit={raw_limit:,}) ...")
-    zip_bytes = prepare_data.remote(limit_users, raw_limit)
+    zip_bytes = prepare_data.remote(limit_users, raw_limit, hf_token)
 
     os.makedirs("data", exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
