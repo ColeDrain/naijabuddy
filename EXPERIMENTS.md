@@ -15,10 +15,11 @@ order **Yelp / Goodreads / Amazon**. All dates 2026.
 | 3 | Comprehensive: synth persona + cold-start + BERTScore | 05-21 | RMSE V2 0.995 / 0.978 / 0.769 | adaptive-α finding; synth helps Yelp retrieval |
 | 4 | Hybrid retrieval weight sweep | 05-21 | w_dense = 0.2 optimal (was 0.3) | ✅ **adopted** w=0.2 in `database.py` + harness |
 | 5 | Candidate-pool retrieval (101/20, uniform + pop-weighted) | 05-21 | pool-101 pop-wtd NDCG@10 0.337 / 0.248 / 0.301 | matched-protocol numbers for paper §4.4 |
-| 6 | Multi-seed (seeds 42, 1, 7) — **CURRENT CANONICAL** | 05-21 | RMSE V2 0.958±.03 / 0.937±.03 / 0.784±.01 | V2>V1 real on Yelp/Goodreads, ≈0 on Amazon |
+| 6 | Multi-seed (seeds 42, 1, 7) — n=350 | 05-21 | RMSE V2 0.958±.03 / 0.937±.03 / 0.784±.01 | ⤷ superseded by #10 (n=2,000) |
 | 7 | Data study: item-mean + variance buckets | 05-21 | user+item blend 0.949 on Yelp — beats LLM V2 | → motivates 3-term calibration |
 | 8 | 3-term calibration measurement (item-mean) | 05-21 | V3 vs V2: −5.0% Yelp, −1.3% GR, −1.7% AMZ; LLM weight ≈ 0 | item-bias is the win; LLM redundant warm |
 | 9 | T2: retrieval-augmented prompting (`--persona-mode rag`) | 05-21 | rating ≈ synth (Δ ≤ .004, in seed noise); review Sem-BGE +.011–.020 all 3 domains | retrieval aids generation, not regression |
+| 10 | **n=2,000 re-evaluation, template persona — ★ CURRENT CANONICAL** | 05-22 | RMSE V2 0.990 / 0.876 / 0.851 (α=0.1); V3 0.956 / 0.864 / 0.848 | 6× sample; every #6 qualitative finding holds |
 
 ## Detail
 
@@ -63,8 +64,11 @@ NDCG@10 hybrid — pool 101 uniform: 0.390/0.329/0.324 · pool 101 pop-weighted:
 random vs temporal split (no timestamps).
 Artifacts: `scratch/evaluation_results_pool{101,20}{,pop}.json`.
 
-### 6 — Multi-seed (42, 1, 7)  ★ CURRENT CANONICAL
+### 6 — Multi-seed (42, 1, 7)  ⤷ SUPERSEDED BY #10
 `python eval_harness.py --seeds 42,1,7 --llm-sample 400 --bertscore --persona-mode synth`
+*n = 350 per domain. Headline figures replaced by the n = 2,000 run (#10); kept
+here as the n = 350 reference point and as the source of the §4.6 / §4.7
+ablations, which were not re-run at n = 2,000.*
 RMSE mean±std — V0: 0.984±.027 / 1.035±.020 / 0.908±.031 · V1: 0.976±.021 /
 0.942±.033 / 0.785±.009 · V2: **0.958±.028 / 0.937±.032 / 0.784±.011**.
 ROUGE-L: 0.096±.001 / 0.083±.002 / 0.097±.002. Semantic-BGE: 0.740 / 0.632 / 0.663.
@@ -109,6 +113,37 @@ user-mean-dominates regime after the template (#2) and synth (#3) arms — but
 gives a small, consistent lift to review-text fidelity. Retrieval helps the
 generative sub-task, not the regression sub-task.
 Artifacts: `scratch/eval_rag_results.json`, `scratch/eval_rag.log`.
+
+### 10 — n=2,000 re-evaluation  ★ CURRENT CANONICAL
+Datasets regenerated at 6× scale: `python local_data_prep.py` (`LIMIT_USERS =
+2000`) streams the three HF source datasets, extracts a dense 3-core, caps each
+to its 2,000 densest users → `data/*_dense.csv`. Counts: interactions
+106,300 / 466,625 / 101,540; users 2,000 / 2,000 / 1,999; items
+10,415 / 57,499 / 21,479; ≥4★ share 70% / 68% / 82%.
+`python eval_harness.py --seeds 42 --bertscore --cold-start --persona-mode template`
+RMSE — V0 1.059/0.994/0.965 · V1 0.995/0.879/0.856 · pure-LLM 1.186/1.102/1.059 ·
+V2 **0.990/0.876/0.851** (α=0.1 every domain). V0→V2 −6.5% / −11.9% / −11.8%;
+the V1→V2 step (the LLM's actual contribution) is only +0.003 to +0.005.
+ROUGE-L: 0.097/0.086/0.093. Semantic-BGE: 0.734/0.634/0.648.
+Retrieval HitRate@10 — dense ≈0.002/0.001/0.004 · hybrid 0.088/0.034/0.063 ·
+CF 0.089/0.039/0.067 · popularity 0.019/0.010/0.011. **CF ≥ hybrid on all three**
+— at this catalogue size the 20%-weighted dense term mildly hurts.
+Two-populations (V1 RMSE by user-variance bucket low/mid/high):
+0.65/0.90/1.14 · 0.46/0.82/1.06 · 0.59/0.84/1.21 — `analysis/study_data.py`.
+V3 3-term (`analysis/measure_calib3.py`, seed 42): V2→V3 0.990→0.956 /
+0.876→0.864 / 0.851→0.848; optimal a/b/c = 0.00/0.60/0.40 · 0.00/0.75/0.25 ·
+0.05/0.80/0.15 — LLM weight ≈ 0, as at n = 350.
+Cold-start optimal α: k=1 0.6/0.7/0.5 → warm 0.1; k=1 blend cuts RMSE
+1.308→1.116 (−14.7%) / 1.428→1.184 (−17.1%) / 1.077→0.953 (−11.5%).
+**Verdict:** every qualitative finding of #6 survives the 6× sample increase —
+regime switch, V1 dominates warm, LLM weight ≈ 0, two populations, CF ≥ hybrid,
+dense retrieval weak. Magnitudes shifted (warm V0→V2 gain rose; absolute
+retrieval HitRate fell because the candidate pool is now 10K–57K items). This is
+the canonical run; paper §4, `numbers_integrity.md` and the abstract/conclusion
+all cite it.
+Artifact: `evaluation_results.{json,md}` (live).
+*Pending: the sampled-metric (101-candidate) retrieval re-run for §4.4 — in
+progress; the paper carries the n = 350 sampled numbers until it lands.*
 
 ## Planned / pending
 
