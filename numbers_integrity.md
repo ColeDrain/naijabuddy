@@ -59,8 +59,13 @@ n = 2,000 headline and the paper flags this inline.
 ## Reproduction notes
 
 - Results are written to `evaluation_results.json` and `evaluation_results.md`.
-- The datasets (`data/*.csv`), synthesised personas (`data/synthesized_personas.json`)
-  and item embeddings (`data/item_embeddings.npz`) are committed, so every
-  command above runs fully offline.
+- The n = 2,000 dense datasets that back the figures above are **regenerated
+  deterministically by `python local_data_prep.py`** (it streams the three HF
+  source datasets and rebuilds `data/*_dense.csv`). They total ~592 MB and,
+  pending a hosting decision, are **not committed** — the committed
+  `data/*_dense.csv` is still the earlier n = 350 build. Synthesised personas
+  (`data/synthesized_personas.json`) and item embeddings
+  (`data/item_embeddings.npz`) are committed. Run `local_data_prep.py` once and
+  every command above then reproduces fully offline.
 - The complete per-run ledger — config, headline numbers, verdict — is
   `EXPERIMENTS.md`.
