@@ -41,15 +41,21 @@ image = (
         "numpy", "sentence-transformers", "duckdb", "huggingface-hub",
         "fastapi", "pydantic", "uvicorn", "rouge-score",
     )
-    .env({
-        "CC": "gcc",
-        "CXX": "g++",
-        "CMAKE_ARGS": "-DGGML_CUDA=ON",
-        "LDFLAGS": "-L/usr/local/cuda/lib64/stubs",
-        "LD_LIBRARY_PATH": "/usr/local/cuda/lib64/stubs",
-    })
-    .run_commands("ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1")
-    .pip_install("llama-cpp-python==0.3.7")
+    # The CUDA stub libs are needed only to *link* llama-cpp at build time.
+    # They must NOT persist to runtime — a stub libcuda shadows the real GPU
+    # driver and makes llama-cpp silently fall back to CPU. So the build env
+    # is scoped to the single install command and the stub symlink is deleted
+    # right after. Not using a persistent .env() also restores the base
+    # image's own correct runtime LD_LIBRARY_PATH.
+    .run_commands(
+        "ln -s /usr/local/cuda/lib64/stubs/libcuda.so "
+        "/usr/local/cuda/lib64/stubs/libcuda.so.1",
+        "CC=gcc CXX=g++ CMAKE_ARGS='-DGGML_CUDA=ON' "
+        "LDFLAGS='-L/usr/local/cuda/lib64/stubs' "
+        "LD_LIBRARY_PATH='/usr/local/cuda/lib64/stubs' "
+        "pip install llama-cpp-python==0.3.7",
+        "rm /usr/local/cuda/lib64/stubs/libcuda.so.1",
+    )
     .run_function(download_models)
     .add_local_dir(
         "./",
@@ -66,7 +72,7 @@ image = (
 
 @app.function(image=image, gpu="a10g", timeout=36000)
 def run_eval_sweep(sample: int, persona_mode: str, seed: int,
-                   bertscore: bool, cold_start: bool):
+                   bertscore: bool, cold_start: bool, cold_sample: int):
     """Execute eval_harness.py inside the GPU container, streaming its output."""
     import subprocess
     import sys
@@ -84,7 +90,7 @@ def run_eval_sweep(sample: int, persona_mode: str, seed: int,
     if bertscore:
         cmd.append("--bertscore")
     if cold_start:
-        cmd.append("--cold-start")
+        cmd += ["--cold-start", "--cold-sample", str(cold_sample)]
     print(f"Running: {' '.join(cmd)}", flush=True)
 
     process = subprocess.Popen(
@@ -111,7 +117,8 @@ def run_eval_sweep(sample: int, persona_mode: str, seed: int,
 
 @app.local_entrypoint()
 def main(sample: int = 2000, persona_mode: str = "template",
-         seed: int = 42, bertscore: bool = True, cold_start: bool = True):
+         seed: int = 42, bertscore: bool = True, cold_start: bool = True,
+         cold_sample: int = 100):
     """
     modal run modal_eval.py --sample 2000 --persona-mode template --seed 42
     modal run modal_eval.py --sample 20    # quick cost/timing calibration
@@ -120,22 +127,18 @@ def main(sample: int = 2000, persona_mode: str = "template",
           f"seed={seed} bertscore={bertscore} cold_start={cold_start}")
 
     results_json, results_md = run_eval_sweep.remote(
-        sample, persona_mode, seed, bertscore, cold_start
+        sample, persona_mode, seed, bertscore, cold_start, cold_sample
     )
 
+    os.makedirs("scratch", exist_ok=True)
     suffix = f"_n{sample}_{persona_mode}_s{seed}"
-    with open(f"evaluation_results{suffix}.json", "w") as f:
+    with open(f"scratch/modal_results{suffix}.json", "w") as f:
         f.write(results_json)
-    with open(f"evaluation_results{suffix}.md", "w") as f:
-        f.write(results_md)
-    # Also refresh the canonical filenames.
-    with open("evaluation_results.json", "w") as f:
-        f.write(results_json)
-    with open("evaluation_results.md", "w") as f:
+    with open(f"scratch/modal_results{suffix}.md", "w") as f:
         f.write(results_md)
 
     print("\n" + "=" * 66)
     print("Cloud evaluation complete. Results written:")
-    print(f"  -> evaluation_results{suffix}.json / .md")
-    print(f"  -> evaluation_results.json / .md (canonical)")
+    print(f"  -> scratch/modal_results{suffix}.json / .md")
+    print("(canonical evaluation_results.json left untouched)")
     print("=" * 66)
