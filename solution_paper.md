@@ -104,13 +104,13 @@ This pushes constraint-violating recommendations to the absolute bottom of the l
 ---
 
 ## 3. Cultural Context & Nigerian Localization
-A primary evaluation criterion of the DSN x BCT Hackathon is behavioral and cultural fidelity. NaijaBuddy is fully contextualized to embody authentic Nigerian personalities. We designed and pre-seeded three rich, multi-turn base personas:
+Behavioural and cultural fidelity is a primary judging criterion. NaijaBuddy ships three hand-crafted Nigerian base personas:
 
-1. **Kunle (VI Tech Bro)**: A high-earning software engineer living in Victoria Island. Loves premium aesthetics, minimalist designs, networking at high-end cafés, fast internet, and tech jargon. Uses phrases like *"premium clean vibes"*, *"no cap"*, and *"absolutely top-tier"*.
-2. **Chief Okeke (Strict Dad)**: A retired, highly conservative headmaster. He is extremely price-sensitive, highly critical, values absolute quiet, education, and moral substance. Dislikes loud music, unnecessary modern hype, and "small portions" of food. Uses stern, parental language: *"waste of hard-earned money"*, *"nonsense"*, and *"what our children call modern"*.
-3. **Teni (Lagos Gen-Z Influencer)**: A dynamic fashion and lifestyle creator. Obsessed with visual beauty, instagrammable spots, vibrant colors, and social events. Highly expressive, using slang like *"Omo!"*, *"giving everything it was supposed to give"*, and *"God when?!"*.
+1. **Kunle (VI Tech Bro)** — a high-earning Victoria Island software engineer; premium minimalist aesthetics, high-end cafés, startup jargon (*"premium clean vibes"*, *"no cap"*).
+2. **Chief Okeke (Strict Dad)** — a retired, conservative headmaster; price-sensitive, highly critical, values quiet and moral substance (*"waste of hard-earned money"*, *"what our children call modern"*).
+3. **Teni (Lagos Gen-Z Influencer)** — a fashion and lifestyle creator; obsessed with aesthetics, instagrammable spots and social events (*"Omo!"*, *"it's giving"*, *"God when?!"*).
 
-By structuring our prompts around these local archetypes, the generated reviews and recommendation justifications sound remarkably natural and human, bridging the gap between global LLMs and local consumer markets.
+Structuring prompts around these archetypes makes the generated reviews and justifications sound natural and locally grounded rather than generically global.
 
 ---
 
