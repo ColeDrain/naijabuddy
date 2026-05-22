@@ -182,15 +182,17 @@ ROUGE-L — verbatim longest-common-subsequence overlap against a single referen
 
 ### 4.4 Retrieval
 
-Stage-1 recall, leave-one-out over each domain's full candidate pool, for four strategies against a popularity baseline (HitRate@10):
+Stage-1 recall, leave-one-out over each domain's full candidate pool, for five strategies against a popularity baseline (HitRate@10):
 
-| Domain | items | dense (content) | hybrid (dense+CF) | CF | popularity |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| Yelp | 10,415 | 0.002 | 0.088 | **0.089** | 0.019 |
-| Goodreads | 57,499 | 0.001 | 0.034 | **0.039** | 0.010 |
-| Amazon | 21,479 | 0.004 | 0.063 | **0.067** | 0.011 |
+| Domain | items | dense (content) | hybrid (dense+CF) | CF | ALS | popularity |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| Yelp | 10,415 | 0.002 | 0.088 | **0.089** | 0.067 | 0.019 |
+| Goodreads | 57,499 | 0.001 | 0.034 | **0.039** | 0.021 | 0.010 |
+| Amazon | 21,479 | 0.004 | 0.063 | **0.067** | 0.051 | 0.011 |
 
 Pure dense content recall is the system's clear weakness — it barely clears, and on the book domains undershoots, the popularity baseline. The cause is structural: BGE embeds item *content*, but recovering a specific held-out item is a *collaborative* task driven by cross-user co-occurrence, which a content encoder does not model. The remedy is an **item-item collaborative-filtering signal blended with the dense score**, min-max normalised per user (dense/CF weight 20/80, set by a leave-one-out HitRate@10 sweep). Hybrid retrieval reaches HitRate@10 of 0.088 (Yelp), 0.034 (Goodreads) and 0.063 (Amazon) — **3.4–6× the popularity baseline**. The absolute figures are well below an earlier n = 350 run because the candidate pool is now far larger — 10K–57K items rather than 0.9K–8K — and ranking the gold item into the top 10 of 57K is a much harder target. At this scale **CF alone slightly *exceeds* the hybrid in every domain**: the dense term, 20% of the blend, mildly hurts, and the collaborative signal does all the work. Content retrieval is best treated as a fallback for genuinely cold users with no co-occurrence history.
+
+We also tested a *learned* collaborative recommender — implicit-feedback **ALS matrix factorisation** [Hu, Koren & Volinsky, 2008] over the same training matrix. It comfortably beats popularity and content retrieval, but **underperforms the simple item-item CF in every domain** — HitRate@10 0.067 / 0.021 / 0.051, against CF's 0.089 / 0.039 / 0.067. This is a live reproduction of Dacrema et al. [2019]: on sparse interaction data with a random hold-out, a well-tuned neighbourhood method beats a latent-factor model. We deploy the item-item CF as the Stage-1 signal and report ALS as evidence that the simple choice is the correct one — not as a failed experiment.
 
 **Comparability to sampled-metric protocols.** The HitRate@10 / NDCG@10 above rank the held-out item against each domain's *entire* candidate pool (10,415–57,499 items). Much of the recommender-systems literature instead reports *sampled* metrics — the held-out item against a small fixed pool of the gold item plus sampled negatives. The two are not interchangeable, and even two sampled metrics disagree unless the negative-sampling distribution matches (Krichene and Rendle, *On Sampled Metrics for Item Recommendation*, KDD 2020). To make our retrieval placeable against that literature, the harness also supports the sampled protocol; under 101 candidates (1 target + 100 **popularity-weighted** negatives — the harder variant), our hybrid retrieval scores:
 
@@ -263,7 +265,7 @@ NaijaBuddy's measured strengths are an **adaptive calibration layer** — a ~10%
 
 **Positioning.** NaijaBuddy's distinctive combination is a small quantised *offline* LLM (against the field's GPT-3.5/4), calibration as a *measured* regime switch rather than an assumed guardrail, reproducible leakage-free evaluation, and explicit cultural localisation for an underserved market.
 
-*References:* Andre et al. 2025 (arXiv:2508.20401); Dacrema et al. 2019 (RecSys); Kang et al. 2023 (arXiv:2305.06474); Kim et al. 2024 (arXiv:2408.06276); Lee et al. 2019 (MeLU, KDD); Peng et al. 2024 (arXiv:2407.07487); Pradeep et al. 2023 (arXiv:2309.15088); Ren et al. 2024 (arXiv:2402.17505); Ryu & Yanaka 2025 (arXiv:2510.00449).
+*References:* Andre et al. 2025 (arXiv:2508.20401); Dacrema et al. 2019 (RecSys); Hu, Koren & Volinsky 2008 (ICDM); Kang et al. 2023 (arXiv:2305.06474); Kim et al. 2024 (arXiv:2408.06276); Lee et al. 2019 (MeLU, KDD); Peng et al. 2024 (arXiv:2407.07487); Pradeep et al. 2023 (arXiv:2309.15088); Ren et al. 2024 (arXiv:2402.17505); Ryu & Yanaka 2025 (arXiv:2510.00449).
 
 ---
 

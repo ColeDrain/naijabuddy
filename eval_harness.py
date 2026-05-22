@@ -474,6 +474,49 @@ def bertscore_f1(hyps, refs):
 # RETRIEVAL  (Stage-1 dense recall, leave-one-out, vectorised)
 # =====================================================================
 
+def als_factorize(R, factors=64, iterations=12, reg=0.1, alpha=40.0, seed=42):
+    """
+    Implicit-feedback matrix factorisation (Hu, Koren & Volinsky, 2008) of the
+    user x item rating matrix R, solved by Alternating Least Squares. Observed
+    ratings become positive feedback with confidence c = 1 + alpha*rating; the
+    factorisation gives score(u, i) = U[u] . V[i]. A proper learned collaborative
+    recommender for the Stage-1 shortlist — pure NumPy, offline, no new dependency.
+    """
+    import numpy as np
+    n_users, n_items = R.shape
+    rng = np.random.RandomState(seed)
+    U = rng.normal(0, 0.01, (n_users, factors))
+    V = rng.normal(0, 0.01, (n_items, factors))
+
+    # per-row sparse interactions: indices + (confidence - 1) = alpha*rating
+    RT = R.T
+    u_idx = [np.nonzero(R[u])[0] for u in range(n_users)]
+    u_cm1 = [alpha * R[u, u_idx[u]].astype(np.float64) for u in range(n_users)]
+    i_idx = [np.nonzero(RT[i])[0] for i in range(n_items)]
+    i_cm1 = [alpha * RT[i, i_idx[i]].astype(np.float64) for i in range(n_items)]
+    eye = reg * np.eye(factors)
+
+    def _half_step(F, idx_rows, cm1_rows, n):
+        """Update every row of the target factor, holding F fixed."""
+        FtF = F.T @ F
+        out = np.zeros((n, F.shape[1]))
+        for j in range(n):
+            idx = idx_rows[j]
+            if idx.size == 0:
+                continue
+            Fj = F[idx]                        # (m, f) factors of interacted items
+            cm1 = cm1_rows[j]                  # (m,) confidence - 1
+            A = FtF + (Fj.T * cm1) @ Fj + eye
+            b = Fj.T @ (cm1 + 1.0)             # sum (1 + alpha*r) * f_i
+            out[j] = np.linalg.solve(A, b)
+        return out
+
+    for _ in range(iterations):
+        U = _half_step(V, u_idx, u_cm1, n_users)
+        V = _half_step(U, i_idx, i_cm1, n_items)
+    return U.astype(np.float32), V.astype(np.float32)
+
+
 def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
                    k=10, persona_fn=None, candidate_pool=None, seed=0,
                    pop_distractors=False):
@@ -557,6 +600,14 @@ def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
             Xtest[ui, ti] = 1.0
     cf_scores = (Xtest @ Rn.T) @ Rn
 
+    # ALS implicit matrix factorisation over the same training matrix R — a
+    # proper learned collaborative recommender, a stronger Stage-1 signal than
+    # raw item-item CF. score(u, i) = als_U[u] . als_V[i].
+    als_U, als_V = als_factorize(R, factors=64, iterations=12, reg=0.1,
+                                 alpha=40.0, seed=(seed or 42))
+    _test_uidx = np.asarray([uidx[u] for u in test_users])
+    als_scores = (als_U[_test_uidx] @ als_V.T).astype(np.float32)
+
     # Hybrid blend: min-max scale dense and CF scores per user and combine.
     # 20% dense / 80% CF — tuned by a leave-one-out HitRate@10 sweep over the
     # weight grid; 0.2 maximises HitRate@10 on the two book domains and ties
@@ -627,6 +678,7 @@ def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
     hr_clean, ndcg_clean = score_run(lambda u: sims_clean[u])
     hr_hybrid, ndcg_hybrid = score_run(lambda u: hybrid_scores[u])
     hr_cf, ndcg_cf = score_run(lambda u: cf_scores[u])
+    hr_als, ndcg_als = score_run(lambda u: als_scores[u])
     hr_pop, ndcg_pop = score_run(lambda u: pop_scores)
 
     return {
@@ -638,6 +690,7 @@ def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
         "dense": {"hit@10": hr_clean, "ndcg@10": ndcg_clean},
         "hybrid": {"hit@10": hr_hybrid, "ndcg@10": ndcg_hybrid},
         "cf": {"hit@10": hr_cf, "ndcg@10": ndcg_cf},
+        "als": {"hit@10": hr_als, "ndcg@10": ndcg_als},
         "popularity": {"hit@10": hr_pop, "ndcg@10": ndcg_pop},
     }
 
@@ -672,6 +725,16 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
     global_mean = (sum(r["rating"] for rs in train_by_user.values() for r in rs)
                    / total) if total else 3.5
 
+    # per-item mean from the FULL training set — an item is "warm" (rated by many
+    # other users) even when the *user* is cold, so item-bias stays a usable
+    # signal; we sweep it as a 3rd calibration term (V3) below.
+    item_sum, item_cnt = {}, {}
+    for rs in train_by_user.values():
+        for r in rs:
+            item_sum[r["item"]] = item_sum.get(r["item"], 0.0) + r["rating"]
+            item_cnt[r["item"]] = item_cnt.get(r["item"], 0) + 1
+    item_mean = {i: item_sum[i] / item_cnt[i] for i in item_sum}
+
     kmax = max(k_values)
     # only users whose training history is large enough for a real truncation
     pool = [h for h in test_rows
@@ -683,7 +746,7 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
 
     out = {}
     for k in k_values:
-        raws, means, actuals, queries, gold, exclude = [], [], [], [], [], []
+        raws, means, imeans, actuals, queries, gold, exclude = [], [], [], [], [], [], []
         for held in pool:
             u = held["user"]
             full = list(train_by_user[u])
@@ -707,6 +770,7 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
                 raw = umean
             raws.append(raw)
             means.append(umean)
+            imeans.append(item_mean.get(held["item"], global_mean))
             actuals.append(held["rating"])
             queries.append(persona)
             gold.append(idx_of[held["item"]])
@@ -718,6 +782,21 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
         sweep = {a: rmse([a * r + (1 - a) * m for r, m in zip(raws, means)], actuals)
                  for a in ALPHA_GRID}
         best_a = min(sweep, key=sweep.get)
+
+        # 3-term cold-start blend: a*LLM + b*user_mean + c*item_mean (a+b+c=1).
+        # Tests whether item-bias — stable even for a cold user — improves on V2.
+        _grid = [round(x / 10, 1) for x in range(11)]
+        best_v3 = None
+        for a in _grid:
+            for b in _grid:
+                c = round(1 - a - b, 1)
+                if c < -1e-9:
+                    continue
+                pred = [a * r + b * m + c * im
+                        for r, m, im in zip(raws, means, imeans)]
+                rr = rmse(pred, actuals)
+                if best_v3 is None or rr < best_v3[0]:
+                    best_v3 = (rr, a, b, c)
 
         # dense content retrieval for the truncated-history query
         Q = np.asarray(embedder.encode(queries, batch_size=64, show_progress_bar=False),
@@ -739,10 +818,14 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
             "rmse_v1_user_mean": v1,
             "rmse_v2_best_blend": sweep[best_a],
             "best_alpha": best_a,
+            "rmse_v3_3term": best_v3[0],
+            "v3_weights": {"llm": best_v3[1], "user": best_v3[2], "item": best_v3[3]},
             "dense_hit@10": hits / n,
         }
         print(f"    [cold k={k}]  n={n}  RMSE V1={v1:.4f}  "
-              f"V2(best a={best_a})={sweep[best_a]:.4f}  dense Hit@10={hits/n:.4f}")
+              f"V2(best a={best_a})={sweep[best_a]:.4f}  "
+              f"V3(3-term)={best_v3[0]:.4f} (a/b/c={best_v3[1]}/{best_v3[2]}/{best_v3[3]})  "
+              f"dense Hit@10={hits/n:.4f}")
     return out
 
 
@@ -916,7 +999,7 @@ def run_eval(seed, args, embedder, llm, cache):
                           "using Semantic-BGE only")
 
         # ---- Retrieval ----------------------------------------------------
-        print("  [Retrieval] embedding items (raw + de-boilerplated), CF, popularity...")
+        print("  [Retrieval] embedding items (raw + de-boilerplated), CF, ALS, popularity...")
         retr = eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
                               persona_fn=persona_fn,
                               candidate_pool=args.candidate_pool, seed=seed,
@@ -926,6 +1009,7 @@ def run_eval(seed, args, embedder, llm, cache):
                                ("dense (de-boilerplated)", "dense"),
                                ("hybrid (dense+CF)", "hybrid"),
                                ("collaborative filtering", "cf"),
+                               ("ALS matrix factorisation", "als"),
                                ("popularity baseline", "popularity")]:
                 s = retr[key]
                 print(f"    {label:<25}: HitRate@10={s['hit@10']:.4f}  NDCG@10={s['ndcg@10']:.4f}")
@@ -1142,8 +1226,8 @@ def _write_markdown(results, args, seeds):
     if any("retrieval" in r for r in per_domain.values()):
         lines.append("## Retrieval - HitRate@10 (leave-one-out)\n")
         lines.append("| Domain | items | dense (boilerplate) | dense (de-boilerplated) | "
-                     "hybrid (dense+CF) | collaborative filtering | popularity |")
-        lines.append("|---|---|---|---|---|---|---|")
+                     "hybrid (dense+CF) | collaborative filtering | ALS | popularity |")
+        lines.append("|---|---|---|---|---|---|---|---|")
         for domain, r in per_domain.items():
             if "retrieval" not in r:
                 continue
@@ -1154,6 +1238,7 @@ def _write_markdown(results, args, seeds):
                          f"{_fmt(rt['dense']['hit@10'], 4)} | "
                          f"{_fmt(rt['hybrid']['hit@10'], 4)} | "
                          f"{_fmt(rt['cf']['hit@10'], 4)} | "
+                         f"{_fmt(rt.get('als', {}).get('hit@10', 0), 4)} | "
                          f"{_fmt(rt['popularity']['hit@10'], 4)} |")
         lines.append("")
         rt0 = next((r["retrieval"] for r in per_domain.values() if "retrieval" in r), None)

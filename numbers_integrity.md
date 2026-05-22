@@ -27,7 +27,7 @@ bars are no longer reported. Held-out set sizes: 2,000 / 2,000 / 1,999.
 | §4.2 two-populations variance buckets | V1 RMSE low/mid/high — 0.65/0.90/1.14 · 0.46/0.82/1.06 · 0.59/0.84/1.21 | `python analysis/study_data.py` |
 | §4.2 / §4.3 V3 3-term calibration | V2→V3 0.990→0.956 / 0.876→0.864 / 0.851→0.848; LLM weight a≈0 | `python analysis/measure_calib3.py` (seed 42) |
 | §4.3 review quality — ROUGE-L, Semantic-BGE | ROUGE-L 0.097/0.086/0.093 · Sem-BGE 0.734/0.634/0.648 | canonical run |
-| §4.4 retrieval — dense/hybrid/CF/popularity | hybrid HitRate@10 0.088/0.034/0.063; CF 0.089/0.039/0.067 (CF ≥ hybrid all 3) | canonical run |
+| §4.4 retrieval — dense/hybrid/CF/ALS/popularity | hybrid HitRate@10 0.088/0.034/0.063; CF 0.089/0.039/0.067; ALS 0.067/0.021/0.051 (item-item CF best) | `eval_harness.py --no-llm` |
 | §4.4 hybrid dense/CF weight = 0.2 | leave-one-out HitRate@10 sweep | `python analysis/tune_hybrid.py` |
 | §4.4 sampled-metric (101-candidate) | NDCG@10 hybrid 0.370 / 0.288 / 0.340; CF 0.374 / 0.292 / 0.358 | `python eval_harness.py --candidate-pool 101 --pop-distractors` |
 | §4.5 cold-start — V1→V2, optimal α (n=2k per k) | k=1 1.405→1.131 / 1.245→1.030 / 1.175→1.017; α schedule k1 0.6–0.7 → k3 0.4 → warm 0.1 | `eval_harness.py --cold-start --cold-sample 2000 --seed 42` |

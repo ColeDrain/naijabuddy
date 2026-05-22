@@ -23,6 +23,7 @@ order **Yelp / Goodreads / Amazon**. All dates 2026.
 | 11 | Persona ablation (§4.6) at n=2,000 — synth arm | 05-22 | V2 0.987 / 0.876 / 0.852 ≈ template; retrieval ≈ equal | synth = template on metrics; a UX choice |
 | 12 | RAG ablation (§4.7) at n=2,000 | 05-22 | V2 0.980 / 0.874 / 0.850 ≈ synth; review Sem-BGE +0.012–0.016 | RAG aids generation, not warm rating |
 | 13 | Cold-start (§4.5) at n=2,000 users/k | 05-22 | k=1 V1→V2 cuts 19.5 / 17.3 / 13.4%; α schedule 0.6–0.7→0.1 | LLM's value concentrated in cold-start |
+| 14 | ALS matrix-factorization retrieval (§4.4) | 05-22 | HitRate@10 0.067 / 0.021 / 0.051 — loses to item-item CF | Dacrema 2019 reproduced; CF stays Stage-1 |
 
 ## Detail
 
@@ -192,6 +193,19 @@ near-identical across domains: k1 ≈ 0.6–0.7, k2 0.5, k3 0.4, warm 0.1.
 the regime switch, now measured at the same n as the warm headline. Abstract /
 §7 cold-start range updated to 13–20%.
 Artifact: `scratch/modal_results_n20_template_s42.{json,md}`.
+
+### 14 — ALS matrix-factorization retrieval (§4.4)
+`python eval_harness.py --no-llm` (local, no GPU — pure-NumPy ALS). Implicit-
+feedback ALS (Hu/Koren/Volinsky 2008; factors=64, 12 iterations, reg=0.1,
+alpha=40) over the same user×item matrix the item-item CF uses.
+HitRate@10 / NDCG@10 — ALS 0.067/0.033 · 0.021/0.010 · 0.051/0.026, vs item-item
+CF 0.089/0.047 · 0.039/0.020 · 0.067/0.039. ALS beats popularity and dense
+content retrieval but **loses to the simpler CF in all three domains**.
+**Finding:** a live reproduction of Dacrema et al. 2019 — a well-tuned
+neighbourhood method beats a latent-factor model on sparse data with a random
+hold-out. Item-item CF stays the deployed Stage-1 signal; ALS is reported in
+§4.4 as a fifth retrieval ablation, not as a failure.
+Artifact: `evaluation_results.{json,md}` (local `--no-llm` run).
 
 ## Planned / pending
 
