@@ -22,25 +22,30 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install(
 )
 
 
-@app.function(image=image, timeout=7200, cpu=4.0, memory=32768,
+@app.function(image=image, timeout=14400, cpu=4.0, memory=32768,
               secrets=[modal.Secret.from_name("hf-token")])
 def prepare_data(limit_users: int = 2000, raw_limit: int = 2_000_000):
     """Stream, densify and pack the three dense CSVs; return a zip of them."""
     import os, io, zipfile
     import pandas as pd
     from datasets import load_dataset, get_dataset_split_names
+    from huggingface_hub import login
 
-    assert os.environ.get("HF_TOKEN"), "HF_TOKEN not in env (Modal hf-token secret missing)"
-    amz_meta_limit = min(5_000_000, max(raw_limit * 3, 300_000))
+    hf_token = os.environ.get("HF_TOKEN")
+    assert hf_token, "HF_TOKEN not in env (Modal hf-token secret missing)"
+    # Force authentication — without it HF rate-limits the streaming requests
+    # to a crawl ("unauthenticated requests" warning).
+    login(token=hf_token, add_to_git_credential=False)
+    amz_meta_limit = min(1_500_000, raw_limit)
 
     def stream_rows(repo, cols, limit, label):
         """Stream up to `limit` rows of `repo`, keeping only `cols`."""
         try:
-            splits = get_dataset_split_names(repo)
+            splits = get_dataset_split_names(repo, token=hf_token)
         except Exception:
             splits = ["train"]
         split = "train" if "train" in splits else splits[0]
-        ds = load_dataset(repo, split=split, streaming=True)
+        ds = load_dataset(repo, split=split, streaming=True, token=hf_token)
         rows = []
         for i, r in enumerate(ds):
             if i >= limit:
