@@ -12,6 +12,7 @@ each to its LIMIT_USERS densest users, and overwrites data/*_dense.csv.
 Runs entirely on this machine — no Modal, no credential passing. Used after
 Modal's `hf-token` secret was found to be stale; the local token is valid.
 """
+import gc
 import os
 import pandas as pd
 from datasets import load_dataset
@@ -100,6 +101,8 @@ def main():
         "business_id": "item_id", "name": "item_name",
         "categories": "category", "stars": "rating", "text": "review_text"})
     yelp = finalize(yelp, "Yelp")
+    del yr, yb
+    gc.collect()
 
     # ---- Goodreads: reviews JOIN book metadata ----
     print("=== Goodreads ===", flush=True)
@@ -114,6 +117,8 @@ def main():
     goodreads["category"] = "Goodreads (Book)"
     goodreads = goodreads.rename(columns={"book_id": "item_id"})
     goodreads = finalize(goodreads, "Goodreads")
+    del gr, gm
+    gc.collect()
 
     # ---- Amazon: reviews + title lookup ----
     print("=== Amazon (Books) ===", flush=True)
@@ -127,6 +132,8 @@ def main():
     ar["category"] = "Amazon (Book)"
     amazon = ar.rename(columns={"parent_asin": "item_id", "text": "review_text"})
     amazon = finalize(amazon, "Amazon")
+    del ar, am
+    gc.collect()
 
     # ---- write (all three at the end, so a mid-run failure leaves data/ intact) ----
     for name, df in [("yelp", yelp), ("goodreads", goodreads), ("amazon", amazon)]:
