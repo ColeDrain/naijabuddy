@@ -28,14 +28,19 @@ def prepare_data(limit_users: int = 2000, raw_limit: int = 2_000_000):
     """Stream, densify and pack the three dense CSVs; return a zip of them."""
     import os, io, zipfile
     import pandas as pd
-    from datasets import load_dataset
+    from datasets import load_dataset, get_dataset_split_names
 
     assert os.environ.get("HF_TOKEN"), "HF_TOKEN not in env (Modal hf-token secret missing)"
     amz_meta_limit = min(5_000_000, max(raw_limit * 3, 300_000))
 
     def stream_rows(repo, cols, limit, label):
         """Stream up to `limit` rows of `repo`, keeping only `cols`."""
-        ds = load_dataset(repo, split="train", streaming=True)
+        try:
+            splits = get_dataset_split_names(repo)
+        except Exception:
+            splits = ["train"]
+        split = "train" if "train" in splits else splits[0]
+        ds = load_dataset(repo, split=split, streaming=True)
         rows = []
         for i, r in enumerate(ds):
             if i >= limit:
