@@ -23,6 +23,7 @@ bars are no longer reported. Held-out set sizes: 2,000 / 2,000 / 1,999.
 | §4.1 dataset counts | interactions 106,300 / 466,625 / 101,540; items 10,415 / 57,499 / 21,479; ≥4★ 70% / 68% / 82% | `python local_data_prep.py` |
 | §4.2 RMSE table — V0/V1/V2, best α | V0 1.059/0.994/0.965 · V1 0.995/0.879/0.856 · V2 **0.990/0.876/0.851** (α=0.1 all) | canonical run |
 | §4.2 V1→V2 step (the LLM's contribution) | +0.003 to +0.005; sweep U-shaped, min at α=0.1 | canonical run (`per_alpha` block) |
+| §4.2 robustness — n=350 paired per-seed V1→V2 | +0.018 / +0.005 / +0.002 (positive on all 3 seeds for Yelp & Goodreads; ≈0 for Amazon) | earlier n=350 multi-seed run — see `EXPERIMENTS.md` #6 |
 | §4.2 two-populations variance buckets | V1 RMSE low/mid/high — 0.65/0.90/1.14 · 0.46/0.82/1.06 · 0.59/0.84/1.21 | `python analysis/study_data.py` |
 | §4.2 / §4.3 V3 3-term calibration | V2→V3 0.990→0.956 / 0.876→0.864 / 0.851→0.848; LLM weight a≈0 | `python analysis/measure_calib3.py` (seed 42) |
 | §4.3 review quality — ROUGE-L, Semantic-BGE | ROUGE-L 0.097/0.086/0.093 · Sem-BGE 0.734/0.634/0.648 | canonical run |
