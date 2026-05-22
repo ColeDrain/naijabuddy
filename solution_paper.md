@@ -248,7 +248,23 @@ NaijaBuddy's measured strengths are an **adaptive calibration layer** — an ~8.
 
 ---
 
-## 5. Discussion & Future Directions
+## 5. Related Work
+
+**LLMs as rerankers and recommenders.** Casting an LLM as a ranking component is now common: the RankGPT family and its open-source counterpart RankVicuna [Pradeep et al., 2023] perform zero-shot listwise reranking, and EXP3RT [Kim et al., 2024] fine-tunes an LLM to extract review-based preferences and produce a reasoning-enhanced rating and reranked list. NaijaBuddy keeps the LLM as a *second-stage* reranker over a cheap hybrid retrieval stage — a design suited to a small local model.
+
+**The limits of the LLM rating signal.** Kang et al. [2023], evaluating LLMs from 250M–540B parameters on user rating prediction, found that zero-shot LLMs lag traditional collaborative filtering whenever interaction data is available — the history, not the LLM, carries the signal. NaijaBuddy corroborates this across three domains and *operationalises* it: our calibration layer measures how much weight the LLM rating should receive (≈ 0 for warm users) and deploys the result as a regime switch. Ryu & Yanaka [2025] show in-context user reviews lift LLM rating prediction toward matrix-factorisation quality, especially for cold-start; our Tier-2 ablation (§4.7) tests this under a leakage-free protocol and refines it — in-context exemplars improve the generated *review text* but not the *warm rating*, where the user-mean already dominates.
+
+**Review generation and user simulation.** Review-LLM [Peng et al., 2024] targets personalised review generation and documents the "polite phenomenon" — LLMs resist producing negative reviews; BASES [Ren et al., 2024] simulates search users at scale. NaijaBuddy's Task A jointly simulates a rating and a persona-grounded review, with the calibration layer re-anchoring an over-generous LLM score against exactly that "polite" upward bias.
+
+**Evaluation rigour.** Dacrema et al. [2019] showed that many neural recommenders fail to beat well-tuned simple baselines once evaluation is done carefully — so we report the global-mean and user-mean baselines beside every LLM result. RankVicuna separately argues that reranking results built on proprietary APIs are not reproducible. NaijaBuddy answers both: a leakage-free leave-one-out protocol, multi-seed error bars, and a 100%-offline stack in which every reported figure regenerates.
+
+**Positioning.** NaijaBuddy's distinctive combination is a small quantised *offline* LLM (against the field's GPT-3.5/4), calibration as a *measured* regime switch rather than an assumed guardrail, reproducible leakage-free evaluation, and explicit cultural localisation for an underserved market.
+
+*References:* Andre et al. 2025 (arXiv:2508.20401); Dacrema et al. 2019 (RecSys); Kang et al. 2023 (arXiv:2305.06474); Kim et al. 2024 (arXiv:2408.06276); Peng et al. 2024 (arXiv:2407.07487); Pradeep et al. 2023 (arXiv:2309.15088); Ren et al. 2024 (arXiv:2402.17505); Ryu & Yanaka 2025 (arXiv:2510.00449).
+
+---
+
+## 6. Discussion & Future Directions
 With more development time and computing resources, we propose the following scaling directions:
 1. **Hybrid Retrieval Indexing**: Combining our dense vector search with sparse BM25 indexing (hybrid lexical-dense retrieval) to enhance exact-match lookups (e.g., searching for specific brand names or exact local spellings).
 2. **GPU & NPU Quantization**: Moving from 4-bit integer quantization (Q4_K_M) to 8-bit or 16-bit weight representations on dedicated hardware accelerators to improve the speed of local token generation.
@@ -256,5 +272,5 @@ With more development time and computing resources, we propose the following sca
 
 ---
 
-## 6. Conclusion
+## 7. Conclusion
 In this work, we developed **NaijaBuddy**, a highly localized, completely offline-first agentic recommender system built for the DSN x BCT Hackathon 3.0. By structuring our system around a dual-stage "Filter-then-Rerank" workflow, we achieve elite low-latency CPU inference within a self-contained Docker container. We implemented an adaptive Calibration Layer that anchors rating predictions to per-user statistics — reducing RMSE by up to 13.7% over a global-mean baseline, with the LLM blend cutting a further 13–15% for cold-start users — and a deterministic Critic Layer for rule-based constraint filtering. We evaluate the system with a leakage-free, reproducible harness over the full held-out set and report results honestly, including where it underperforms: content-only retrieval and warm-user rating accuracy. Enriched with authentic Nigerian personas, NaijaBuddy represents a reliable and culturally authentic approach to generative recommendation and consumer behavioral simulation on the edge.
