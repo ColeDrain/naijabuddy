@@ -687,8 +687,10 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
         for held in pool:
             u = held["user"]
             full = list(train_by_user[u])
-            # deterministic per-(user,k,seed) truncation
-            kk = random.Random(hash((u, k, seed)) & 0xFFFFFFFF).sample(full, k)
+            # deterministic, process-stable per-(user,k,seed) truncation
+            # (Python's built-in hash() is salted per process — use hashlib)
+            tseed = int(hashlib.md5(f"{u}|{k}|{seed}".encode()).hexdigest()[:8], 16)
+            kk = random.Random(tseed).sample(full, k)
             if persona_mode == "synth":
                 persona = synthesize_persona(llm, domain, kk, item_info, cache,
                                              {"domain": domain, "user": u,

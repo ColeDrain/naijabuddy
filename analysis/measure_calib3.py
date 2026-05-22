@@ -6,8 +6,9 @@ Tier 1a measurement: does a 3-term calibration
 beat the deployed 2-term blend  y = a*LLM + (1-a)*user_mean ?
 
 Uses the cached LLM raw ratings (eval_artifacts/llm_cache.jsonl) from the
-multi-seed warm run — zero new GPU. Sweeps the (a,b,c) simplex and reports per
-domain, averaged over the three splits (seeds 42, 1, 7).
+warm run — zero new GPU. Sweeps the (a,b,c) simplex and reports per domain.
+A seed with too few cached ratings is skipped: the n=2,000 cache holds only
+seed-42 generations, so seeds 1/7 fall out and the run reports seed 42 alone.
 """
 import os, sys, math, statistics, collections
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,6 +58,11 @@ for seed in SEEDS:
             isx.append(im.get(h["item"], gm))
             act.append(h["rating"])
 
+        if len(raws) < 100:
+            print(f"  seed {seed:>2} {domain:<10}: only {len(raws)} cached "
+                  f"ratings — skipped (need >= 100 for a valid sweep)")
+            continue
+
         v2 = min(rmse([a * r + (1 - a) * u for r, u in zip(raws, us)], act)
                  for a in GRID)
         best = None
@@ -73,9 +79,12 @@ for seed in SEEDS:
         print(f"  seed {seed:>2} {domain:<10}: V2={v2:.4f}  "
               f"V3={best[0]:.4f}  (a={best[1]}, b={best[2]}, c={best[3]})")
 
-print("\n=== averaged over seeds 42/1/7 ===")
+print("\n=== averaged over valid seeds (>= 100 cached ratings) ===")
 for domain in E.DOMAINS.values():
     r = agg[domain]
+    if not r:
+        print(f"  {domain:<10}: no valid seed — skipped")
+        continue
     v2m = statistics.mean(x[0] for x in r)
     v3m = statistics.mean(x[1][0] for x in r)
     am = statistics.mean(x[1][1] for x in r)
