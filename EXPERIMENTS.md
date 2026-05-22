@@ -22,6 +22,7 @@ order **Yelp / Goodreads / Amazon**. All dates 2026.
 | 10 | **n=2,000 re-evaluation, template persona — ★ CURRENT CANONICAL** | 05-22 | RMSE V2 0.990 / 0.876 / 0.851 (α=0.1); V3 0.956 / 0.864 / 0.848 | 6× sample; every #6 qualitative finding holds |
 | 11 | Persona ablation (§4.6) at n=2,000 — synth arm | 05-22 | V2 0.987 / 0.876 / 0.852 ≈ template; retrieval ≈ equal | synth = template on metrics; a UX choice |
 | 12 | RAG ablation (§4.7) at n=2,000 | 05-22 | V2 0.980 / 0.874 / 0.850 ≈ synth; review Sem-BGE +0.012–0.016 | RAG aids generation, not warm rating |
+| 13 | Cold-start (§4.5) at n=2,000 users/k | 05-22 | k=1 V1→V2 cuts 19.5 / 17.3 / 13.4%; α schedule 0.6–0.7→0.1 | LLM's value concentrated in cold-start |
 
 ## Detail
 
@@ -135,8 +136,9 @@ Two-populations (V1 RMSE by user-variance bucket low/mid/high):
 V3 3-term (`analysis/measure_calib3.py`, seed 42): V2→V3 0.990→0.956 /
 0.876→0.864 / 0.851→0.848; optimal a/b/c = 0.00/0.60/0.40 · 0.00/0.75/0.25 ·
 0.05/0.80/0.15 — LLM weight ≈ 0, as at n = 350.
-Cold-start optimal α: k=1 0.6/0.7/0.5 → warm 0.1; k=1 blend cuts RMSE
-1.308→1.116 (−14.7%) / 1.428→1.184 (−17.1%) / 1.077→0.953 (−11.5%).
+Cold-start was initially measured here at cold-sample 100; it has since been
+re-run at n = 2,000 users per k — see experiment #13, which supersedes it and
+backs paper §4.5.
 **Verdict:** every qualitative finding of #6 survives the 6× sample increase —
 regime switch, V1 dominates warm, LLM weight ≈ 0, two populations, CF ≥ hybrid,
 dense retrieval weak. Magnitudes shifted (warm V0→V2 gain rose; absolute
@@ -175,6 +177,21 @@ rating (a third confirmation of the user-mean-dominates regime, after template
 and synth), but gives a small, consistent lift to review-text fidelity.
 Retrieval augmentation helps the generative sub-task, not the regression one.
 Artifact: `scratch/modal_results_n2000_rag_s42.{json,md}`.
+
+### 13 — Cold-start at n=2,000 (§4.5)
+`modal run modal_eval.py --sample 20 --persona-mode template --cold-sample 2000 --seed 42`
+(Modal A10G). Truncates each test user's history to k ∈ {1,2,3} and re-evaluates,
+on 2,000 users per domain per k (1,997 Amazon) — 20× the cold-sample of #10.
+V1 → V2 (best blend), optimal α:
+- Yelp:      k1 1.405→1.131 (α0.7) · k2 1.214→1.108 (α0.5) · k3 1.135→1.065 (α0.4)
+- Goodreads: k1 1.245→1.030 (α0.6) · k2 1.085→0.992 (α0.5) · k3 1.042→0.977 (α0.4)
+- Amazon:    k1 1.175→1.017 (α0.6) · k2 1.036→0.969 (α0.5) · k3 0.978→0.932 (α0.4)
+k=1 RMSE cut: 19.5 / 17.3 / 13.4%. The optimal-α schedule is monotonic and
+near-identical across domains: k1 ≈ 0.6–0.7, k2 0.5, k3 0.4, warm 0.1.
+**Finding:** the LLM's contribution scales inversely with available history —
+the regime switch, now measured at the same n as the warm headline. Abstract /
+§7 cold-start range updated to 13–20%.
+Artifact: `scratch/modal_results_n20_template_s42.{json,md}`.
 
 ## Planned / pending
 

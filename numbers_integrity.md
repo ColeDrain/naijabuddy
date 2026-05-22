@@ -30,7 +30,7 @@ bars are no longer reported. Held-out set sizes: 2,000 / 2,000 / 1,999.
 | §4.4 retrieval — dense/hybrid/CF/popularity | hybrid HitRate@10 0.088/0.034/0.063; CF 0.089/0.039/0.067 (CF ≥ hybrid all 3) | canonical run |
 | §4.4 hybrid dense/CF weight = 0.2 | leave-one-out HitRate@10 sweep | `python analysis/tune_hybrid.py` |
 | §4.4 sampled-metric (101-candidate) | NDCG@10 hybrid 0.370 / 0.288 / 0.340; CF 0.374 / 0.292 / 0.358 | `python eval_harness.py --candidate-pool 101 --pop-distractors` |
-| §4.5 cold-start — optimal α, k=1 RMSE | α at k=1 0.6/0.7/0.5 → 0.1 warm; V1→V2 1.308→1.116 / 1.428→1.184 / 1.077→0.953 | canonical run (`--cold-start`) |
+| §4.5 cold-start — V1→V2, optimal α (n=2k per k) | k=1 1.405→1.131 / 1.245→1.030 / 1.175→1.017; α schedule k1 0.6–0.7 → k3 0.4 → warm 0.1 | `eval_harness.py --cold-start --cold-sample 2000 --seed 42` |
 | §4.6 persona ablation — template vs synth (n=2k) | V2 0.990/0.876/0.851 vs 0.987/0.876/0.852; hybrid Hit@10 0.088/0.034/0.063 vs 0.083/0.032/0.066 | `eval_harness.py --persona-mode {template,synth} --seed 42` |
 | §4.7 RAG ablation — synth vs rag (n=2k) | V2 0.987/0.876/0.852 vs 0.980/0.874/0.850; Sem-BGE 0.738/0.633/0.648 vs 0.754/0.645/0.662 | `eval_harness.py --persona-mode rag --seed 42` |
 
