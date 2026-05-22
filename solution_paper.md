@@ -33,42 +33,19 @@ Our main contributions are:
 NaijaBuddy’s backend engine is built entirely in Python using FastAPI, SQLite, NumPy, and llama-cpp. The architecture consists of four distinct, sequential layers:
 
 ```
-+-----------------------------------------------------------+
-|               User Persona / Input Query                  |
-+-----------------------------------------------------------+
-                              |
-                              v
-+-----------------------------------------------------------+
-|  Layer 1: Stage-1 Recall (BAAI/bge-small + Cosine Sim)   |
-|  - Compares user embedding to hybrid SQLite database      |
-|  - Retrieves the Top-10 candidate items                  |
-+-----------------------------------------------------------+
-                              |
-                              v
-+-----------------------------------------------------------+
-|  Layer 2: Stage-2 Rerank (Local Qwen-2.5-3B-Instruct GGUF)|
-|  - In-context persona modeling and pairwise sorting       |
-|  - Generates ROUGE-optimized review text in local slang   |
-+-----------------------------------------------------------+
-                              |
-                              v
-+-----------------------------------------------------------+
-|  Layer 3: Mathematical Calibration (Alpha Blend)          |
-|  - Warm User: Blends LLM score with historical User Mean   |
-|  - Cold User: Neighborhood Cluster-Mean via top K=5 users |
-+-----------------------------------------------------------+
-                              |
-                              v
-+-----------------------------------------------------------+
-|  Layer 4: Deterministic Critic Safety Filter              |
-|  - Applies strict filters (e.g., Vegan / Noise checks)    |
-|  - Re-sorts candidates pushing anomalies to the bottom   |
-+-----------------------------------------------------------+
-                              |
-                              v
-+-----------------------------------------------------------+
-|          Final Calibrated Ratings, Reviews & Recs         |
-+-----------------------------------------------------------+
+User persona / query
+  │
+  ├─ Layer 1 · Recall      BGE-small dense search + item-item CF over the
+  │                        hybrid SQLite catalogue → top-10 candidates
+  ├─ Layer 2 · Rerank      local Qwen2.5-3B-Instruct (GGUF): in-context
+  │                        persona modelling, pairwise sort, review generation
+  ├─ Layer 3 · Calibrate   blend the LLM rating with the user/item statistical
+  │                        anchor (cluster-mean fallback for cold-start)
+  └─ Layer 4 · Critic      deterministic rule filter — constraint-violating
+                           items pushed to the bottom
+  │
+  ▼
+Final calibrated ratings, reviews & recommendations
 ```
 
 ### 2.1 Layer 1: Hybrid Catalog & Dense Semantic Recall
