@@ -141,9 +141,12 @@ dense retrieval weak. Magnitudes shifted (warm V0→V2 gain rose; absolute
 retrieval HitRate fell because the candidate pool is now 10K–57K items). This is
 the canonical run; paper §4, `numbers_integrity.md` and the abstract/conclusion
 all cite it.
-Artifact: `evaluation_results.{json,md}` (live).
-*Pending: the sampled-metric (101-candidate) retrieval re-run for §4.4 — in
-progress; the paper carries the n = 350 sampled numbers until it lands.*
+Sampled-metric re-run (101-candidate, pop-weighted negatives, n = 2,000):
+NDCG@10 hybrid 0.370 / 0.288 / 0.340 · CF 0.374 / 0.292 / 0.358 · HitRate@10
+hybrid 0.645 / 0.496 / 0.515 — CF ≥ hybrid here too, as under the full pool.
+Paper §4.4 sampled table is now fully n = 2,000.
+Artifacts: `evaluation_results.{json,md}` (live, full-pool canonical);
+`scratch/evaluation_results_pool101_n2k.{json,md}` (sampled-metric run).
 
 ## Planned / pending
 

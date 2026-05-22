@@ -194,11 +194,11 @@ Pure dense content recall is the system's clear weakness — it barely clears, a
 
 | Domain | NDCG@10 (hybrid) | NDCG@10 (CF) | HitRate@10 (hybrid) |
 | :--- | :---: | :---: | :---: |
-| Yelp | 0.337 | 0.332 | 0.602 |
-| Goodreads | 0.248 | 0.257 | 0.449 |
-| Amazon | 0.301 | 0.313 | 0.503 |
+| Yelp | 0.370 | 0.374 | 0.645 |
+| Goodreads | 0.288 | 0.292 | 0.496 |
+| Amazon | 0.340 | 0.358 | 0.515 |
 
-*101-candidate sampled protocol, popularity-weighted negatives (n = 350); reproduced with `eval_harness.py --candidate-pool 101 --pop-distractors`. This is the one §4 table still at the earlier n = 350 scale — the n = 2,000 sampled re-run is in progress; its Yelp figures so far (hybrid NDCG@10 ≈ 0.37) move in line with the full-pool result above.*
+*101-candidate sampled protocol, popularity-weighted negatives; n = 2,000 users per domain, seed 42. Reproduced with `eval_harness.py --candidate-pool 101 --pop-distractors`. As under the full-pool protocol, CF marginally exceeds the hybrid in every domain.*
 
 We report these for placement, not as a like-for-like benchmark, and flag one protocol difference we cannot eliminate: our leave-one-out split holds out a *random* interaction, whereas the temporal protocol common in this literature holds out each user's *latest* interaction. The temporal split is harder, and under a random hold-out it specifically favours collaborative filtering — a random target drawn from a long history leaves abundant co-occurrence signal. This inflates the sampled scores relative to a temporal protocol, most of all on Goodreads — the heaviest-history domain at ~230 interactions per kept user, against ~50 on Yelp and Amazon. Our datasets carry no timestamps, so the temporal split cannot be reproduced here; we disclose it as the honest limit of cross-protocol comparison.
 

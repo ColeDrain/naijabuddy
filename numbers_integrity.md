@@ -28,7 +28,7 @@ bars are no longer reported. Held-out set sizes: 2,000 / 2,000 / 1,999.
 | §4.3 review quality — ROUGE-L, Semantic-BGE | ROUGE-L 0.097/0.086/0.093 · Sem-BGE 0.734/0.634/0.648 | canonical run |
 | §4.4 retrieval — dense/hybrid/CF/popularity | hybrid HitRate@10 0.088/0.034/0.063; CF 0.089/0.039/0.067 (CF ≥ hybrid all 3) | canonical run |
 | §4.4 hybrid dense/CF weight = 0.2 | leave-one-out HitRate@10 sweep | `python analysis/tune_hybrid.py` |
-| §4.4 sampled-metric (101-candidate) NDCG@10 | hybrid 0.337 / 0.248 / 0.301 — *carried from the n=350 run; n=2k re-run in progress* | `python eval_harness.py --no-llm --candidate-pool 101 --pop-distractors` |
+| §4.4 sampled-metric (101-candidate) | NDCG@10 hybrid 0.370 / 0.288 / 0.340; CF 0.374 / 0.292 / 0.358 | `python eval_harness.py --candidate-pool 101 --pop-distractors` |
 | §4.5 cold-start — optimal α, k=1 RMSE | α at k=1 0.6/0.7/0.5 → 0.1 warm; V1→V2 1.308→1.116 / 1.428→1.184 / 1.077→0.953 | canonical run (`--cold-start`) |
 | §4.6 persona ablation — template vs synth | RMSE ≈ equal; Yelp HitRate@10 0.174 vs 0.198 — *n = 350 ablation* | `eval_harness.py --persona-mode {template,synth} --seed 42` |
 | §4.7 RAG ablation — V2 RMSE, Sem-BGE, ROUGE-L | rag 0.999/0.977/0.770 · BGE 0.763/0.645/0.683 — *n = 350 ablation* | `eval_harness.py --persona-mode rag --llm-sample 400 --bertscore --seed 42` |
