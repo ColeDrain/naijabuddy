@@ -14,17 +14,17 @@ In this paper, we present **NaijaBuddy**, a 100% offline-first, containerized ag
 ---
 
 ## 1. Introduction
-With the explosion of user-generated content on platforms such as Yelp, Amazon, and Goodreads, user-modeling and recommendation systems have transitioned from matrix factorization toward semantic, conversational agents. However, deploying these models in local, resource-constrained environments (such as typical edge nodes or servers in emerging markets) presents unique challenges:
-1. **Network & Cloud Dependence**: Traditional LLM systems rely on external APIs (e.g., OpenAI or Anthropic), which are susceptible to network outages, card-authorization failures, and steep operational costs.
-2. **LLM Rating Volatility**: When prompted to simulate review ratings (1.0 to 5.0 stars), LLMs display a pronounced "positivity bias" or round heavily to integer boundaries (5.0 or 1.0), leading to suboptimal Root Mean Squared Error (RMSE) performance.
-3. **Lack of Cultural Fidelity**: Global foundation models lack the cultural and linguistic nuance necessary to simulate authentic Nigerian responses, often sounding overly dry, formal, or academic.
+User-modeling and recommendation systems have moved from matrix factorization toward semantic, conversational agents. But deploying these in resource-constrained settings — edge nodes, or servers in emerging markets — raises three challenges:
 
-To solve these problems, we introduce **NaijaBuddy**, a unified agentic recommendation and review simulator. NaijaBuddy runs entirely offline inside a single Docker container, exposing both a rich conversational glassmorphic UI and an automated REST API. 
+1. **Network & cloud dependence.** Cloud-LLM systems rely on external APIs, exposed to outages, card-authorization failures, and recurring cost.
+2. **LLM rating volatility.** Asked for a 1–5 star rating, LLMs show a pronounced positivity bias and round toward integer extremes, inflating RMSE.
+3. **Cultural fidelity.** Global foundation models lack the linguistic nuance to simulate authentic Nigerian responses, often sounding dry or academic.
 
-Our main contributions are:
-* **The "Filter-then-Rerank" Paradigm**: We implement a lightweight, dual-stage recommender. The recall stage retrieves candidate items using exact Cosine Similarity on dense 384-dimensional embeddings, and the rerank stage utilizes a local GGUF LLM, minimizing context tokens and inference latency.
-* **Mathematical Calibration Layer**: We formulate a blending algorithm governed by a tunable hyperparameter $\alpha$ to constrain LLM volatility. For cold-start users, we introduce a vector-neighborhood Cluster-Mean fallback.
-* **Nigerian Semantic Enrichment**: We seed our database with a localized catalog (famous Lagos eateries, Nollywood cinematic milestones, and African literature masterpieces) and align our prompt structures to synthesize authentic Nigerian voices (e.g., "Strict Nigerian Dad", "VI Tech Bro", "Lagos Gen-Z Influencer").
+We introduce **NaijaBuddy**, a unified agentic recommender and review simulator that runs entirely offline inside one Docker container, exposing both an interactive web UI and a REST API. Our contributions:
+
+* **A filter-then-rerank pipeline** — dense cosine recall over 384-d embeddings, then a local GGUF LLM reranker — that keeps context and latency low enough for CPU inference.
+* **A calibration layer** that blends the LLM rating with statistical anchors under a tunable $\alpha$, with a vector-neighbourhood cluster-mean fallback for cold-start users.
+* **Nigerian localization** — a seeded local catalogue (Lagos eateries, Nollywood films, African literature) and persona-grounded prompts ("Strict Nigerian Dad", "VI Tech Bro", "Lagos Gen-Z Influencer").
 
 ---
 
