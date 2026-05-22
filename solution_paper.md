@@ -222,27 +222,26 @@ This reframes the calibration layer. It is not a guardrail that "reduces to the 
 
 ### 4.6 Ablation — Does LLM Persona Synthesis Help?
 
-NaijaBuddy can model a user two ways: a deterministic **template** persona (category list plus two review snippets) or an **LLM-synthesised** prose persona. Holding everything else fixed (seed 42, identical retrieval weights), we run the full evaluation under each. *This ablation and §4.7 predate the n = 2,000 re-run and are reported at the earlier n = 350 scale; what each isolates is a within-table contrast, so the absolute figures are not directly comparable to the n = 2,000 headline of §4.2.*
+NaijaBuddy can model a user two ways: a deterministic **template** persona (category list plus two review snippets) or an **LLM-synthesised** prose persona. Holding everything else fixed (seed 42, identical retrieval weights), we run the full evaluation under each, at n = 2,000:
 
-| Metric | Template persona | Synthesised persona |
+| Metric (Yelp / Goodreads / Amazon) | Template persona | Synthesised persona |
 | :--- | :---: | :---: |
-| RMSE V2 (Yelp / Goodreads / Amazon) | 0.998 / 0.980 / 0.768 | 0.995 / 0.978 / 0.769 |
-| Hybrid HitRate@10 — Yelp | 0.174 | **0.198** |
-| Hybrid HitRate@10 — Goodreads / Amazon | 0.051 / 0.054 | 0.046 / 0.046 |
+| RMSE V2 | 0.990 / 0.876 / 0.851 | 0.987 / 0.876 / 0.852 |
+| Hybrid HitRate@10 | 0.088 / 0.034 / 0.063 | 0.083 / 0.032 / 0.066 |
 
-Synthesis makes **no measurable difference to rating accuracy** — unsurprising, since §4.2 shows the rating is anchored on statistics, not on the persona text. Its effect is on *retrieval*, and it is **domain-dependent**: a fluent prose persona lifts Yelp recall by ~14% (0.174 → 0.198), because Yelp items carry rich, discriminative categories a descriptive persona can match; on the two book domains, where every item's category is the single token "Book", the prose persona slightly *hurts* (≈0.05 → 0.046) — it adds wording the content encoder cannot ground. The honest reading: persona synthesis earns its cost where item content is discriminative and is roughly neutral-to-negative where it is not. We keep it enabled — it matches the deployed conversational system and carries the human-facing demo — but report it as a genuine *mixed* ablation result, not an unqualified win.
+Synthesis makes **no measurable difference to rating accuracy** — V2 differs by ≤ 0.003 — unsurprising, since §4.2 shows the rating is anchored on statistics, not on the persona text. At n = 2,000 it makes **no meaningful difference to retrieval either**: hybrid HitRate@10 moves by at most 0.005 and not consistently in sign. The reason is structural — at a realistic catalogue size (10K–57K items) content/dense retrieval has collapsed toward zero (§4.4), and the retrieval signal that survives, item-item CF, is computed from co-occurrence and is *persona-independent by construction*. (An earlier n = 350 run, with catalogues 10–60× smaller where dense retrieval still functioned, did show synthesis lifting Yelp recall; that effect does not survive the realistic catalogue size.) The honest reading: on these offline metrics template and synthesised personas are **equivalent** — persona synthesis is a UX choice, carrying the conversational human-facing demo and matching the deployed system, not a metrics lever.
 
 ### 4.7 Retrieval-Augmented Prompting
 
-A third way to ground the LLM is **retrieval-augmented prompting (RAG)**: rather than an abstracted persona, the prompt is seeded with the user's **k = 4 past interactions most similar to the target item** — the real item descriptions and the actual ratings and reviews the user gave them — retrieved by cosine similarity. The hypothesis is that concrete examples of a user's own behaviour should ground the model better than a paraphrased summary of it. We evaluate at seed 42, directly comparable to §4.6 (and, like it, at the n = 350 scale):
+A third way to ground the LLM is **retrieval-augmented prompting (RAG)**: rather than an abstracted persona, the prompt is seeded with the user's **k = 4 past interactions most similar to the target item** — the real item descriptions and the actual ratings and reviews the user gave them — retrieved by cosine similarity. The hypothesis is that concrete examples of a user's own behaviour should ground the model better than a paraphrased summary of it. We evaluate at seed 42 and n = 2,000, directly comparable to §4.6:
 
 | Metric (Yelp / Goodreads / Amazon) | Synthesised persona | Retrieval-augmented |
 | :--- | :---: | :---: |
-| RMSE V2 | 0.995 / 0.978 / 0.769 | 0.999 / 0.977 / 0.770 |
-| Review Semantic-BGE | 0.742 / 0.634 / 0.667 | **0.763 / 0.645 / 0.683** |
-| Review ROUGE-L | 0.097 / 0.081 / 0.099 | **0.099 / 0.090 / 0.100** |
+| RMSE V2 | 0.987 / 0.876 / 0.852 | 0.980 / 0.874 / 0.850 |
+| Review Semantic-BGE | 0.738 / 0.633 / 0.648 | **0.754 / 0.645 / 0.662** |
+| Review ROUGE-L | 0.100 / 0.082 / 0.091 | **0.102 / 0.088 / 0.098** |
 
-The result splits cleanly by sub-task. On **rating prediction** RAG is indistinguishable from a synthesised persona — the three V2 figures differ by ≤ 0.004, inside the sampling noise of §4.2, and the optimal blend weight stays pinned at α ≈ 0.1. This is the §4.2 result reached from a third independent direction: a deterministic template (§4.6), an LLM-synthesised persona, and retrieved real exemplars all leave warm-user rating dominated by the user-mean prior — no prompting strategy rescues the LLM's numeric estimate where the statistics already win. On **review generation**, by contrast, RAG produces a small but perfectly consistent gain: Semantic-BGE rises in all three domains (+0.011 to +0.020) and ROUGE-L in all three. The mechanism is intuitive — an abstracted persona discards the user's actual vocabulary, whereas in-context examples of their real past reviews let the model echo their voice, which both a surface-overlap and an embedding metric reward. The honest reading: retrieval augmentation helps exactly where the task carries stylistic signal — the generative sub-task — and not where the task is regression against a strong prior.
+The result splits cleanly by sub-task. On **rating prediction** RAG is indistinguishable from a synthesised persona — the V2 figures differ by ≤ 0.007, inside the sampling noise of §4.2, and the optimal blend weight stays pinned at α ≈ 0.1–0.2. This is the §4.2 result reached from a third independent direction: a deterministic template (§4.6), an LLM-synthesised persona, and retrieved real exemplars all land warm-user V2 within 0.01 RMSE of one another — no prompting strategy rescues the LLM's numeric estimate where the user-mean prior already wins. On **review generation**, by contrast, RAG produces a small but perfectly consistent gain: Semantic-BGE rises in all three domains (+0.012 to +0.016) and ROUGE-L in all three. The mechanism is intuitive — an abstracted persona discards the user's actual vocabulary, whereas in-context examples of their real past reviews let the model echo their voice, which both a surface-overlap and an embedding metric reward. The honest reading: retrieval augmentation helps exactly where the task carries stylistic signal — the generative sub-task — and not where the task is regression against a strong prior.
 
 ### 4.8 Honest Summary
 

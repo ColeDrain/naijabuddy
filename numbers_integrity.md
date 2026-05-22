@@ -31,15 +31,8 @@ bars are no longer reported. Held-out set sizes: 2,000 / 2,000 / 1,999.
 | §4.4 hybrid dense/CF weight = 0.2 | leave-one-out HitRate@10 sweep | `python analysis/tune_hybrid.py` |
 | §4.4 sampled-metric (101-candidate) | NDCG@10 hybrid 0.370 / 0.288 / 0.340; CF 0.374 / 0.292 / 0.358 | `python eval_harness.py --candidate-pool 101 --pop-distractors` |
 | §4.5 cold-start — optimal α, k=1 RMSE | α at k=1 0.6/0.7/0.5 → 0.1 warm; V1→V2 1.308→1.116 / 1.428→1.184 / 1.077→0.953 | canonical run (`--cold-start`) |
-| §4.6 persona ablation — template vs synth | RMSE ≈ equal; Yelp HitRate@10 0.174 vs 0.198 — *n = 350 ablation* | `eval_harness.py --persona-mode {template,synth} --seed 42` |
-| §4.7 RAG ablation — V2 RMSE, Sem-BGE, ROUGE-L | rag 0.999/0.977/0.770 · BGE 0.763/0.645/0.683 — *n = 350 ablation* | `eval_harness.py --persona-mode rag --llm-sample 400 --bertscore --seed 42` |
-
-**Scope note on §4.6 / §4.7.** The persona ablation and the RAG ablation
-predate the n = 2,000 re-run and remain at the n = 350 scale (each is ~10 h of
-LLM inference; re-running both was out of budget). Each isolates a *within-table
-contrast* — template vs synthesised, persona vs retrieval-augmented — which is
-sample-size-robust; their absolute figures are not directly comparable to the
-n = 2,000 headline and the paper flags this inline.
+| §4.6 persona ablation — template vs synth (n=2k) | V2 0.990/0.876/0.851 vs 0.987/0.876/0.852; hybrid Hit@10 0.088/0.034/0.063 vs 0.083/0.032/0.066 | `eval_harness.py --persona-mode {template,synth} --seed 42` |
+| §4.7 RAG ablation — synth vs rag (n=2k) | V2 0.987/0.876/0.852 vs 0.980/0.874/0.850; Sem-BGE 0.738/0.633/0.648 vs 0.754/0.645/0.662 | `eval_harness.py --persona-mode rag --seed 42` |
 
 ## Discarded / superseded figures
 

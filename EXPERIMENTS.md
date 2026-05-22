@@ -20,6 +20,8 @@ order **Yelp / Goodreads / Amazon**. All dates 2026.
 | 8 | 3-term calibration measurement (item-mean) | 05-21 | V3 vs V2: −5.0% Yelp, −1.3% GR, −1.7% AMZ; LLM weight ≈ 0 | item-bias is the win; LLM redundant warm |
 | 9 | T2: retrieval-augmented prompting (`--persona-mode rag`) | 05-21 | rating ≈ synth (Δ ≤ .004, in seed noise); review Sem-BGE +.011–.020 all 3 domains | retrieval aids generation, not regression |
 | 10 | **n=2,000 re-evaluation, template persona — ★ CURRENT CANONICAL** | 05-22 | RMSE V2 0.990 / 0.876 / 0.851 (α=0.1); V3 0.956 / 0.864 / 0.848 | 6× sample; every #6 qualitative finding holds |
+| 11 | Persona ablation (§4.6) at n=2,000 — synth arm | 05-22 | V2 0.987 / 0.876 / 0.852 ≈ template; retrieval ≈ equal | synth = template on metrics; a UX choice |
+| 12 | RAG ablation (§4.7) at n=2,000 | 05-22 | V2 0.980 / 0.874 / 0.850 ≈ synth; review Sem-BGE +0.012–0.016 | RAG aids generation, not warm rating |
 
 ## Detail
 
@@ -148,13 +150,39 @@ Paper §4.4 sampled table is now fully n = 2,000.
 Artifacts: `evaluation_results.{json,md}` (live, full-pool canonical);
 `scratch/evaluation_results_pool101_n2k.{json,md}` (sampled-metric run).
 
+### 11 — Persona ablation at n=2,000 (§4.6)
+`modal run modal_eval.py --sample 2000 --persona-mode synth --seed 42` (Modal A10G).
+The template arm is the #10 canonical run; only the synthesised-persona arm is new.
+RMSE V2 — synth **0.987 / 0.876 / 0.852** vs template 0.990 / 0.876 / 0.851 (Δ ≤ 0.003).
+Hybrid HitRate@10 — synth 0.083 / 0.032 / 0.066 vs template 0.088 / 0.034 / 0.063
+(Δ ≤ 0.005, sign not consistent). CF HitRate@10 is identical to template
+(0.089/0.0385/0.067) — confirming CF is persona-independent, a clean cross-check.
+**Finding:** at n=2,000 template and synthesised personas are equivalent on every
+offline metric — rating is statistics-anchored, retrieval is CF-carried. The
+n=350 "synth lifts Yelp retrieval" effect does not survive a realistic catalogue
+size. Synthesis is a UX choice, not a metrics lever.
+Artifact: `scratch/modal_results_n2000_synth_s42.{json,md}`.
+
+### 12 — RAG ablation at n=2,000 (§4.7)
+`modal run modal_eval.py --sample 2000 --persona-mode rag --seed 42` (Modal A10G).
+Seeds the prompt with the user's k=4 most-similar past interactions instead of an
+abstracted persona; compared against the synth arm of #11 at the same seed.
+RMSE V2 — rag **0.980 / 0.874 / 0.850** vs synth 0.987 / 0.876 / 0.852 (Δ ≤ 0.007).
+Review — Sem-BGE rag 0.754 / 0.645 / 0.662 vs synth 0.738 / 0.633 / 0.648 (+0.012
+to +0.016, all 3); ROUGE-L rag 0.102 / 0.088 / 0.098 vs synth 0.100 / 0.082 / 0.091
+(up on all 3). **Finding:** holds from the n=350 run — RAG does not move warm
+rating (a third confirmation of the user-mean-dominates regime, after template
+and synth), but gives a small, consistent lift to review-text fidelity.
+Retrieval augmentation helps the generative sub-task, not the regression one.
+Artifact: `scratch/modal_results_n2000_rag_s42.{json,md}`.
+
 ## Planned / pending
 
 | ID | Experiment | Status |
 |---|---|---|
 | T1a | 3-term calibration `α·LLM + β·μ_user + γ·μ_item` | ✅ shipped — 3-term anchor in agent.py + paper §4.2 |
 | T1b | Variance-bucketed V2-vs-V1 analysis (post-hoc from cache) | not started |
-| T2 | Retrieval-augmented prompting — ablation vs static persona | ✅ shipped — experiment #9, paper §4.7 |
+| T2 | Retrieval-augmented prompting — ablation vs static persona | ✅ shipped — experiments #9 (n=350) + #12 (n=2k), paper §4.7 |
 
 ## Reproduction
 
