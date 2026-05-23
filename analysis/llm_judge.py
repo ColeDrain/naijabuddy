@@ -3,25 +3,30 @@ LLM-as-judge evaluation for review-text quality (Behavioural Fidelity +
 Contextual Relevance — the rubric's human-eval buckets, of which we currently
 have ZERO evidence in the paper).
 
-For each cached generated review, this asks a strong external judge model
-(default: Gemini 2.5 Flash via Google AI) to score on 1–5 across two axes:
+Uses GPT-OSS-120B — OpenAI's 2025 open-weight 120B-parameter model — hosted
+on either Groq (api.groq.com/openai/v1) or Cerebras (api.cerebras.ai/v1).
+Picked as default because as of May 2026 it is the strongest production
+model on BOTH providers, faster than Llama 3.3 70B (500 / 3000 tok/s), and
+cheaper on Groq ($0.15/$0.60 per 1M input/output tokens).
 
+For each cached generated review, asks the judge to score on 1–5 across:
   * Behavioural fidelity — does the review sound like a real person of this
     persona writing about this item? (1=clearly synthetic, 5=indistinguishable)
   * Contextual relevance — does the review actually engage with this specific
     item, or is it generic boilerplate? (1=generic, 5=specific to this item)
 
 Results are aggregated per-domain and per-axis, written to:
-    scratch/llm_judge_<seed>.json
+    scratch/llm_judge_s<seed>_<provider>.json
 
-The script is INDEPENDENT of the warm/cold harness — it reads the existing
-`eval_artifacts/llm_cache.jsonl` cache, finds the reviews to score, samples
-N per domain, batches the judging calls. ~$1–2 worth of Gemini for the full
-500-review-per-domain × 3-seed run.
+Reads the per-seed cache `eval_artifacts/llm_cache_s{seed}.jsonl` (the new
+convention from modal_eval.py) and falls back to the legacy `llm_cache.jsonl`.
 
-Usage:
-    export GEMINI_API_KEY=...           # or GOOGLE_API_KEY
-    .venv/bin/python analysis/llm_judge.py --sample 500
+Usage (auto-detects provider from env):
+    export GROQ_API_KEY=...            # or CEREBRAS_API_KEY=...
+    .venv/bin/python analysis/llm_judge.py --sample 500 --seed 42
+
+Or pick explicitly:
+    .venv/bin/python analysis/llm_judge.py --provider cerebras --seed 1
 """
 import argparse
 import collections
@@ -31,7 +36,6 @@ import re
 import sys
 import time
 
-CACHE_PATH = os.path.join("eval_artifacts", "llm_cache.jsonl")
 OUT_DIR = "scratch"
 JUDGE_PROMPT = """You are an expert evaluator of recommender-system review generations.
 
@@ -57,13 +61,58 @@ Respond with ONLY a single JSON object, no commentary, no markdown:
 {{"behavioural_fidelity": <int 1-5>, "contextual_relevance": <int 1-5>}}
 """
 
+# Provider config: (env var, base_url, default model id on that provider).
+# GPT-OSS-120B is the strongest production model on BOTH providers as of
+# May 2026 — same model architecture, different model-id slugs per provider.
+PROVIDERS = {
+    "groq": (
+        "GROQ_API_KEY",
+        "https://api.groq.com/openai/v1",
+        "openai/gpt-oss-120b",
+    ),
+    "cerebras": (
+        "CEREBRAS_API_KEY",
+        "https://api.cerebras.ai/v1",
+        "gpt-oss-120b",
+    ),
+}
 
-def _load_warm_reviews():
-    """Walk llm_cache.jsonl, return list of (domain, persona, item-meta, review)."""
+
+def _resolve_provider(arg_provider):
+    """Explicit > whichever env key is set > error."""
+    if arg_provider:
+        if arg_provider not in PROVIDERS:
+            sys.exit(f"unknown provider {arg_provider!r}; pick from {list(PROVIDERS)}")
+        return arg_provider
+    for p, (env_key, _, _) in PROVIDERS.items():
+        if os.environ.get(env_key):
+            print(f"auto-selected provider={p} (from {env_key})", flush=True)
+            return p
+    sys.exit(
+        "no API key found. Set one of: "
+        + ", ".join(env for env, _, _ in PROVIDERS.values())
+    )
+
+
+def _make_client(provider):
+    try:
+        from openai import OpenAI
+    except Exception:
+        sys.exit("pip install openai  # the OpenAI SDK is the easiest way to call "
+                 "Groq / Cerebras (both speak OpenAI-compatible APIs)")
+    env_key, base_url, default_model = PROVIDERS[provider]
+    api_key = os.environ.get(env_key)
+    if not api_key:
+        sys.exit(f"ERROR: {env_key} not set in env")
+    return OpenAI(api_key=api_key, base_url=base_url), default_model
+
+
+def _load_warm_reviews(cache_path):
+    """Walk an llm_cache.jsonl, return only warm-stage review records."""
     rows = []
-    if not os.path.exists(CACHE_PATH):
-        sys.exit(f"cache not found at {CACHE_PATH} — run the warm eval first")
-    with open(CACHE_PATH) as f:
+    if not os.path.exists(cache_path):
+        sys.exit(f"cache not found at {cache_path} — run the warm eval first")
+    with open(cache_path) as f:
         for line in f:
             try:
                 r = json.loads(line)
@@ -78,17 +127,18 @@ def _load_warm_reviews():
     return rows
 
 
-def _gemini_call(model, prompt, max_retries=3):
-    """Call Gemini, retry on transient errors."""
-    import google.generativeai as genai
+def _judge_call(client, model, prompt, max_retries=3):
+    """Call the judge LLM with exponential-backoff retries on transient errors."""
     for attempt in range(max_retries):
         try:
-            resp = model.generate_content(
-                prompt,
-                generation_config={"temperature": 0.0, "max_output_tokens": 64,
-                                   "response_mime_type": "application/json"},
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=64,
+                response_format={"type": "json_object"},
             )
-            return resp.text.strip()
+            return resp.choices[0].message.content.strip()
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
@@ -97,7 +147,7 @@ def _gemini_call(model, prompt, max_retries=3):
 
 
 def _parse_scores(text):
-    """Parse the judge's JSON, robust to whitespace / stray tokens."""
+    """Parse the judge's JSON; robust to whitespace / stray tokens."""
     if not text:
         return None, None
     m = re.search(r"\{[^{}]*\}", text, re.DOTALL)
@@ -122,21 +172,39 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", type=int, default=500,
                     help="reviews to judge per domain (default 500)")
-    ap.add_argument("--seed", type=int, default=42, help="filter cache to this seed only")
-    ap.add_argument("--model", type=str, default="gemini-2.5-flash",
-                    help="Gemini model id to use as judge")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="filter cache to this seed only")
+    ap.add_argument("--provider", choices=list(PROVIDERS), default=None,
+                    help="judge LLM provider; auto-detected from env if omitted")
+    ap.add_argument("--model", type=str, default=None,
+                    help="override the provider's default model id")
+    ap.add_argument("--cache-file", type=str, default=None,
+                    help="path to llm_cache jsonl (default tries the per-seed "
+                         "file first, then llm_cache.jsonl)")
     args = ap.parse_args()
 
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        sys.exit("ERROR: set GEMINI_API_KEY (or GOOGLE_API_KEY) in env")
+    provider = _resolve_provider(args.provider)
+    client, default_model = _make_client(provider)
+    model = args.model or default_model
+    print(f"judge: provider={provider} model={model}", flush=True)
 
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(args.model)
+    # Try the per-seed cache filename first (modal_eval.py's NAIJABUDDY_CACHE_FILE
+    # convention) and fall back to the legacy single-file name.
+    if args.cache_file:
+        cache_paths = [args.cache_file]
+    else:
+        cache_paths = [
+            os.path.join("eval_artifacts", f"llm_cache_s{args.seed}.jsonl"),
+            os.path.join("eval_artifacts", "llm_cache.jsonl"),
+        ]
+    cache_path = next((p for p in cache_paths if os.path.exists(p)), None)
+    if not cache_path:
+        sys.exit(f"no cache found at any of: {cache_paths}")
+    print(f"reading cache from {cache_path}", flush=True)
 
-    rows = _load_warm_reviews()
-    rows = [r for r in rows if r.get("seed") in (args.seed, str(args.seed))]
+    rows = _load_warm_reviews(cache_path)
+    rows = [r for r in rows
+            if r.get("seed") in (args.seed, str(args.seed))]
     print(f"loaded {len(rows):,} warm reviews for seed {args.seed}")
 
     by_domain = collections.defaultdict(list)
@@ -146,14 +214,14 @@ def main():
           {d: len(v) for d, v in by_domain.items()})
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    out_path = os.path.join(OUT_DIR, f"llm_judge_s{args.seed}.json")
-    results = {"model": args.model, "seed": args.seed,
+    out_path = os.path.join(OUT_DIR, f"llm_judge_s{args.seed}_{provider}.json")
+    results = {"provider": provider, "model": model, "seed": args.seed,
                "sample_per_domain": args.sample, "domains": {}}
 
     for domain, items in by_domain.items():
         items = items[:args.sample]
         bfs, crs, n_parsed = [], [], 0
-        print(f"\n--- {domain}: judging {len(items):,} reviews ---")
+        print(f"\n--- {domain}: judging {len(items):,} reviews ---", flush=True)
         t0 = time.time()
         for i, r in enumerate(items, 1):
             prompt = JUDGE_PROMPT.format(
@@ -163,7 +231,7 @@ def main():
                 description=(r.get("generated_review") or "")[:200],
                 review=r.get("generated_review", ""),
             )
-            text = _gemini_call(model, prompt)
+            text = _judge_call(client, model, prompt)
             bf, cr = _parse_scores(text or "")
             if bf is not None:
                 bfs.append(bf); crs.append(cr); n_parsed += 1
@@ -177,7 +245,7 @@ def main():
         bf_mean = sum(bfs) / len(bfs) if bfs else None
         cr_mean = sum(crs) / len(crs) if crs else None
         print(f"  --> behavioural_fidelity={bf_mean}  contextual_relevance={cr_mean}  "
-              f"(n_parsed={n_parsed}/{len(items)})")
+              f"(n_parsed={n_parsed}/{len(items)})", flush=True)
         results["domains"][domain] = {
             "n_judged": len(items), "n_parsed": n_parsed,
             "behavioural_fidelity_mean": bf_mean,
@@ -186,7 +254,7 @@ def main():
 
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nwrote {out_path}")
+    print(f"\nwrote {out_path}", flush=True)
 
 
 if __name__ == "__main__":
