@@ -133,8 +133,15 @@ def _parse_scores(text):
     cpu=2.0,
     timeout=3600,
 )
-def judge(seed: int, sample: int, provider: str, model: str):
-    """Run inside the Modal container — reads /cache, calls provider, returns JSON."""
+def judge(seed: int, sample: int, provider: str, model: str,
+          cache_file: str = ""):
+    """Run inside the Modal container — reads /cache, calls provider, returns JSON.
+
+    cache_file: optional override of the cache filename on /cache. If empty,
+    falls back to llm_cache_s{seed}.jsonl (the template-llama-cpp default)
+    and then llm_cache.jsonl. Pass e.g. 'llm_cache_s42_synth_vllm.jsonl' to
+    judge the synth-vLLM run's cached reviews.
+    """
     from openai import OpenAI
 
     env_key, base_url, _ = PROVIDERS[provider]
@@ -143,14 +150,18 @@ def judge(seed: int, sample: int, provider: str, model: str):
         return {"error": f"{env_key} not present in container env"}
     client = OpenAI(api_key=api_key, base_url=base_url)
 
-    cache_path = f"/cache/llm_cache_s{seed}.jsonl"
-    if not os.path.exists(cache_path):
-        # Fall back to legacy single-file cache, just in case.
-        alt = "/cache/llm_cache.jsonl"
-        if os.path.exists(alt):
-            cache_path = alt
-        else:
-            return {"error": f"no cache at /cache/llm_cache_s{seed}.jsonl"}
+    if cache_file:
+        cache_path = f"/cache/{cache_file}"
+        if not os.path.exists(cache_path):
+            return {"error": f"no cache at {cache_path}"}
+    else:
+        cache_path = f"/cache/llm_cache_s{seed}.jsonl"
+        if not os.path.exists(cache_path):
+            alt = "/cache/llm_cache.jsonl"
+            if os.path.exists(alt):
+                cache_path = alt
+            else:
+                return {"error": f"no cache at /cache/llm_cache_s{seed}.jsonl"}
 
     rows = []
     with open(cache_path) as f:
@@ -243,9 +254,10 @@ def judge(seed: int, sample: int, provider: str, model: str):
 
 @app.local_entrypoint()
 def main(seed: int = 42, sample: int = 500, provider: str = "groq",
-         model: str = ""):
+         model: str = "", cache_file: str = ""):
     """
     modal run modal_llm_judge.py --seed 42 --sample 500
+    modal run modal_llm_judge.py --seed 42 --cache-file llm_cache_s42_synth_vllm.jsonl
     """
     if provider not in PROVIDERS:
         sys.exit(f"unknown provider {provider!r}; pick from {list(PROVIDERS)}")
@@ -253,16 +265,18 @@ def main(seed: int = 42, sample: int = 500, provider: str = "groq",
     model = model or default_model
     secret_name = SECRET_NAMES[provider]
     print(f"judging via Modal: provider={provider} model={model} "
-          f"seed={seed} sample={sample}  secret={secret_name!r}", flush=True)
+          f"seed={seed} sample={sample}  secret={secret_name!r}"
+          f"  cache_file={cache_file or '(default)'}", flush=True)
 
     # Both secrets are declared statically on the function decorator above,
     # so the container has GROQ_API_KEY and (if it exists) CEREBRAS_API_KEY
     # in its env. The function picks the right one based on `provider`.
-    results = judge.remote(seed=seed, sample=sample,
-                           provider=provider, model=model)
+    results = judge.remote(seed=seed, sample=sample, provider=provider,
+                           model=model, cache_file=cache_file)
 
     os.makedirs("scratch", exist_ok=True)
-    out_path = f"scratch/llm_judge_s{seed}_{provider}.json"
+    tag = "_synth" if "synth" in cache_file else ""
+    out_path = f"scratch/llm_judge_s{seed}{tag}_{provider}.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
 

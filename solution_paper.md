@@ -265,7 +265,36 @@ A third way to ground the LLM is **retrieval-augmented prompting (RAG)**: rather
 
 The result splits cleanly by sub-task. On **rating prediction** RAG is indistinguishable from a synthesised persona — the V2 figures differ by ≤ 0.007, inside the sampling noise of §4.2, and the optimal blend weight stays pinned at α ≈ 0.1–0.2. This is the §4.2 result reached from a third independent direction: a deterministic template (§4.6), an LLM-synthesised persona, and retrieved real exemplars all land warm-user V2 within 0.01 RMSE of one another — no prompting strategy rescues the LLM's numeric estimate where the user-mean prior already wins. On **review generation**, by contrast, RAG produces a small but perfectly consistent gain: Semantic-BGE rises in all three domains (+0.012 to +0.016) and ROUGE-L in all three. The mechanism is intuitive — an abstracted persona discards the user's actual vocabulary, whereas in-context examples of their real past reviews let the model echo their voice, which both a surface-overlap and an embedding metric reward. The honest reading: retrieval augmentation helps exactly where the task carries stylistic signal — the generative sub-task — and not where the task is regression against a strong prior.
 
-### 4.8 Honest Summary
+### 4.8 Cross-Domain Transfer — does Books-taste predict Movies-rating?
+
+The §4.5 cold-start result — *item-bias dominates when user history is scarce* — has a stronger statement: it should hold even when the user is **fully cold in the target domain** but has rich history in *another* domain entirely. We test this on a constructed Amazon Books → Movies transfer benchmark.
+
+**Dataset.** From the Amazon-Reviews-2023 5-core rating-only files (no item titles or descriptions in this slice; this is purely a statistical test) we extracted the 2,000 densest users who have ≥ 10 ratings in **both** Books and Movies (`cross_domain_dataset.py`). Each user contributes their full Books history, their Movies training history (all-but-last by timestamp), and the held-out last Movies rating as target. The pool spans 317,830 Books interactions, 287,817 Movies-train interactions, and 97,028 unique Movies items. 528 of the 2,000 held-out movies are *items no other user in this slice rated*, so the item-mean signal is absent there and reduces to the global mean.
+
+**Models compared.** No LLM is used in this protocol — the source data has no item metadata to ground the model on, and we instead isolate the *statistical* transfer signal. For each user, predict the held-out Movies rating using:
+
+| Model | Formula | RMSE |
+| :--- | :--- | :---: |
+| V0 (global Movies mean) | $\bar{y}_\text{movies}$ | 1.265 |
+| V1 user-mean over **Books** *(cross-domain)* | $\mu_\text{user, books}$ | **1.192** |
+| V1 user-mean over Movies *(in-domain upper bound)* | $\mu_\text{user, movies}$ | 1.137 |
+| item-mean only (held-out movie) | $\mu_\text{item, movies}$ | 1.306 |
+| **V2 books-user + item-bias** (best $\beta = 0.7$) | $\beta\,\mu_\text{user, books} + (1-\beta)\,\mu_\text{item, movies}$ | **1.166** |
+| V2 movies-user + item-bias (best $\beta = 0.8$) | $\beta\,\mu_\text{user, movies} + (1-\beta)\,\mu_\text{item, movies}$ | 1.123 |
+
+*n = 2,000 users with held-out Movies rating + full Books history + Movies training history. Best $\beta$ is the descriptive minimum of a 21-point sweep over $[0,1]$.*
+
+Three findings stand out:
+
+1. **Books taste transfers to Movies taste.** The user's mean Books rating (V1_books, RMSE 1.19) is 0.073 better than the global mean (V0, 1.27) and only 0.055 worse than the in-domain user-mean (V1_movies, 1.14). Roughly **57% of the in-domain user-bias signal is recoverable from Books alone** — far from a random or null transfer. A reader who is generous with their Books ratings tends to be generous with their Movies ratings too.
+
+2. **Item-bias closes the cross-domain gap, mirroring §4.5.** Adding the target movie's cross-user mean to the books-user prior (V2 books+item) reduces RMSE from 1.19 to **1.17** — the same item-bias term that does most of the work in cold-start (§4.5) also does the work cross-domain. Note that the V2 books+item RMSE (1.17) is **closer to the in-domain V2 (1.12) than V1_books was to V1_movies** — the item-bias term proportionally helps the cross-domain case more, consistent with our interpretation that item-bias rescues whichever user-side signal is weakest.
+
+3. **Pure item-bias alone is the worst predictor** (RMSE 1.31, worse even than V0 global mean). The item-bias term carries information *only when combined with a user-side prior* — it is not a baseline, it is a corrector. This refines §4.5: V3's strength is not just "item-bias rescues cold users" but "**any user-side prior plus item-bias beats either alone**", and the held-out movie not needing to be in the user's domain at all is the strongest possible statement of that.
+
+Regenerable with `python cross_domain_dataset.py && python cross_domain_eval.py`. The protocol is purely statistical and runs in seconds on CPU — no LLM, no GPU, no Modal — which makes it the cheapest reproducibility test for the §4.5 thesis we can offer.
+
+### 4.9 Honest Summary
 
 NaijaBuddy's measured strengths are an **adaptive 3-term calibration layer** — a 6–13% mean RMSE reduction over a global baseline for warm users (V0 → V2, mean ± std across 3 seeds) and a **20–30% reduction for cold-start users at k = 1** (V1 → V3) — **hybrid retrieval** that beats the popularity baseline by 3.4–6× at HR@10 and remains competitive with ALS at HR@100 across all three domains, and fully offline operation. Its measured weaknesses are content-only retrieval, which does not beat popularity, and warm-user rating accuracy, where the LLM contributes only 0.004–0.011 RMSE over a user-bias + item-bias prior. The deployed system is the V3 3-term anchor — `α·LLM + β·μ_user + γ·μ_item` — with weights that migrate from item-mean-dominant at k = 1 to user-mean-dominant once history accumulates and an LLM weight that stays at 0.03–0.10 throughout. We report all of these directly — including a small-sample figure from an earlier draft that the full evaluation overturned — because a recommender's credibility rests on an evaluation that reproduces. The headline multi-seed figures are regenerated by `modal run modal_vllm_eval.py --sample 2000 --persona-mode synth --seed {42,1,7} --cold-start --cold-sample 2000 --bertscore`; the §4.7 ablation by `eval_harness.py --persona-mode rag --seed 42`.
 
