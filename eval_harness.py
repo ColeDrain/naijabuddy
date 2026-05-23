@@ -905,37 +905,79 @@ def eval_cold_start(domain, train_by_user, test_rows, item_info, embedder, llm,
     if not pool:
         return None
 
+    # Cold-start dispatch: each held-out user's truncation + persona + score is
+    # independent, so under --vllm-url we dispatch them through a thread pool
+    # (same pattern as the warm-eval loop). In synth mode this DOUBLES the LLM
+    # calls per user (synthesize_persona then llm_score), so the speedup matters
+    # even more here than in warm.
+    def _resolve_cold_user(held, k):
+        u = held["user"]
+        full = list(train_by_user[u])
+        # deterministic, process-stable per-(user,k,seed) truncation
+        # (Python's built-in hash() is salted per process — use hashlib)
+        tseed = int(hashlib.md5(f"{u}|{k}|{seed}".encode()).hexdigest()[:8], 16)
+        kk = random.Random(tseed).sample(full, k)
+        if persona_mode == "synth":
+            persona = synthesize_persona(llm, domain, kk, item_info, cache,
+                                         {"domain": domain, "user": u,
+                                          "k": k, "stage": "cold"})
+        else:
+            persona = build_persona(domain, kk, item_info)
+        umean = sum(r["rating"] for r in kk) / len(kk)
+
+        if llm is not None:
+            raw, _ = llm_score(llm, persona, item_info[held["item"]], cache,
+                               {"domain": domain, "user": u,
+                                "item": held["item"], "k": k, "stage": "cold"})
+        else:
+            raw = umean
+        excl = {idx_of[r["item"]] for r in kk if r["item"] in idx_of}
+        return (raw, umean, item_mean.get(held["item"], global_mean),
+                held["rating"], persona, idx_of[held["item"]], excl)
+
     out = {}
+    vllm_url = getattr(args, "vllm_url", None) if "args" in globals() else None
+    # The function signature here doesn't carry args; detect by checking if the
+    # llm is a VLLMShim instance (the only path that benefits from parallel
+    # client-side dispatch).
+    is_vllm = llm is not None and llm.__class__.__name__ == "VLLMShim"
+
     for k in k_values:
         raws, means, imeans, actuals, queries, gold, exclude = [], [], [], [], [], [], []
-        for held in pool:
-            u = held["user"]
-            full = list(train_by_user[u])
-            # deterministic, process-stable per-(user,k,seed) truncation
-            # (Python's built-in hash() is salted per process — use hashlib)
-            tseed = int(hashlib.md5(f"{u}|{k}|{seed}".encode()).hexdigest()[:8], 16)
-            kk = random.Random(tseed).sample(full, k)
-            if persona_mode == "synth":
-                persona = synthesize_persona(llm, domain, kk, item_info, cache,
-                                             {"domain": domain, "user": u,
-                                              "k": k, "stage": "cold"})
-            else:
-                persona = build_persona(domain, kk, item_info)
-            umean = sum(r["rating"] for r in kk) / len(kk)
 
-            if llm is not None:
-                raw, _ = llm_score(llm, persona, item_info[held["item"]], cache,
-                                   {"domain": domain, "user": u,
-                                    "item": held["item"], "k": k, "stage": "cold"})
-            else:
-                raw = umean
-            raws.append(raw)
-            means.append(umean)
-            imeans.append(item_mean.get(held["item"], global_mean))
-            actuals.append(held["rating"])
-            queries.append(persona)
-            gold.append(idx_of[held["item"]])
-            exclude.append({idx_of[r["item"]] for r in kk if r["item"] in idx_of})
+        if is_vllm:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            workers = 32
+            ordered = [None] * len(pool)
+            t_start = time.time()
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futs = {ex.submit(_resolve_cold_user, h, k): i
+                        for i, h in enumerate(pool)}
+                done = 0
+                for fut in as_completed(futs):
+                    idx = futs[fut]
+                    ordered[idx] = fut.result()
+                    done += 1
+                    if done <= 3 or done % 100 == 0 or done == len(pool):
+                        rate = (time.time() - t_start) / done
+                        eta = rate * (len(pool) - done)
+                        print(f"    [cold k={k}] {done}/{len(pool)}  "
+                              f"{rate:.2f}s/call  ETA {eta/60:.1f} min  "
+                              f"(parallel={workers})")
+            for r in ordered:
+                if r is None:
+                    continue
+                raw, umean, imean, act, persona, gi, excl = r
+                raws.append(raw); means.append(umean); imeans.append(imean)
+                actuals.append(act); queries.append(persona)
+                gold.append(gi); exclude.append(excl)
+        else:
+            for held in pool:
+                r = _resolve_cold_user(held, k)
+                raw, umean, imean, act, persona, gi, excl = r
+                raws.append(raw); means.append(umean); imeans.append(imean)
+                actuals.append(act); queries.append(persona)
+                gold.append(gi); exclude.append(excl)
 
         n = len(actuals)
         v0 = rmse([global_mean] * n, actuals)
