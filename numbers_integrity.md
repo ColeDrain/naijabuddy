@@ -28,7 +28,7 @@ Held-out set sizes per seed: 2,000 / 2,000 / 1,999.
 | §4.2 two-populations variance buckets | V1 RMSE low/mid/high — 0.65/0.90/1.14 · 0.46/0.82/1.06 · 0.59/0.84/1.21 | `python analysis/study_data.py` (single-seed analysis, persona-mode-independent) |
 | §4.2 V3 3-term calibration (warm, single-seed reference) | V2→V3 0.990→0.956 / 0.876→0.864 / 0.851→0.848; LLM weight a≈0 | `python analysis/measure_calib3.py` (seed 42, llama-cpp-Q4 cache) |
 | §4.3 review quality — ROUGE-L, Sem-BGE (mean ± std × 3) | ROUGE-L 0.084±0.001 / 0.073±0.001 / 0.079±0.000 · Sem-BGE 0.723±0.001 / 0.626±0.002 / 0.646±0.001 | canonical run + aggregator |
-| §4.3 BERTScore-F1 (single-seed reference) | 0.842 / 0.844 / 0.849; cross-seed std ≤ 0.0005 in prior runs | earlier llama-cpp-Q4 single-seed; not regenerable on vLLM A10G due to GPU OOM (RoBERTa-large + vLLM compete for VRAM) |
+| §4.3 BERTScore-F1 (mean ± std × 3 seeds) | 0.838 ± 0.000 / 0.841 ± 0.000 / 0.846 ± 0.000 (true std ±0.0003) | `modal run modal_bertscore_backfill.py` (Modal A10G; backfill pass reading the cached synth-vLLM generations after the original synth-vLLM run OOM'd RoBERTa-large) |
 | §4.4 multi-k retrieval (HR/NDCG @ 10/20/50/100, mean ± std × 3) | hybrid HR@10 0.087±0.008 / 0.034±0.006 / 0.065±0.004 · CF HR@10 0.094±0.006 / 0.037±0.006 / 0.064±0.002 · ALS HR@10 0.071±0.006 / 0.020±0.002 / 0.046±0.003 · HR@100 ALS ≈ CF on all domains | canonical run + aggregator |
 | §4.4 hybrid dense/CF weight = 0.2 | leave-one-out HitRate@10 sweep | `python analysis/tune_hybrid.py` |
 | §4.4 sampled-metric (101-candidate, single-seed) | NDCG@10 hybrid 0.370 / 0.288 / 0.340; CF 0.374 / 0.292 / 0.358 | `python eval_harness.py --candidate-pool 101 --pop-distractors` |
