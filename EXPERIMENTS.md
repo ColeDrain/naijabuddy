@@ -194,7 +194,48 @@ the regime switch, now measured at the same n as the warm headline. Abstract /
 §7 cold-start range updated to 13–20%.
 Artifact: `scratch/modal_results_n20_template_s42.{json,md}`.
 
-### 15 — Multi-seed n=2,000 (audit-fixed) + multi-k retrieval + BERTScore  ★ NEW CANONICAL
+### 16 — Synth multi-seed n=2,000 on vLLM + implicit ALS  ★ NEW CANONICAL
+`for s in 42 1 7; do modal run modal_vllm_eval.py --sample 2000 --persona-mode synth --seed $s --cold-start --cold-sample 2000 --bertscore; done`
+Three parallel Modal A10G containers, each spawning a vLLM 0.21 server in the
+container and driving it via the OpenAI-compatible HTTP API with 32 concurrent
+client requests (`eval_harness.VLLMShim` + `ThreadPoolExecutor`). Engine swap
+from llama-cpp-python Q4_K_M GGUF (single-stream, ~150 tok/s) to vLLM fp16
+(PagedAttention + continuous batching, ~5–10k tok/s aggregate). ALS in the
+retrieval phase also swapped from pure-NumPy to the `implicit` library
+(C++/Cython/OpenMP, ~50× faster on the 100K × 20K Amazon matrix). Per-seed
+cache filename `llm_cache_s{seed}_synth_vllm.jsonl` so vLLM-fp16 outputs never
+collide with the prior llama-cpp-Q4 cache on the same Modal volume.
+**Warm-start RMSE V2 (mean ± std across 3 synth seeds):**
+- Yelp:      V2 0.989 ± 0.002  (was 0.990 single-seed on llama-cpp-Q4 in #10)
+- Goodreads: V2 0.894 ± 0.027  (was 0.876)
+- Amazon:    V2 0.834 ± 0.015  (was 0.851)
+Engines agree to within the new error bars — engine-precision change (fp16 vs
+Q4_K_M) is dominated by sampling noise.
+**Review-text reproducibility:** ROUGE-L std ≤ 0.001, Sem-BGE std ≤ 0.002 across
+the 3 seeds (Yelp / Goodreads / Amazon) — review text is highly reproducible.
+BERTScore-F1 could not be computed in this run: the synth-vLLM container had
+~85% of A10G VRAM allocated to vLLM weights + KV cache, and RoBERTa-large for
+BERTScore OOM'd with no room to load. Retained as a single-seed reference from
+the earlier llama-cpp-Q4 run (std ≤ 0.0005 there).
+**Multi-k retrieval (mean ± std × 3):**
+HR@10 — hybrid 0.087±0.008 / 0.034±0.006 / 0.065±0.004 ; CF 0.094±0.006 /
+0.037±0.006 / 0.064±0.002 ; ALS 0.071±0.006 / 0.020±0.002 / 0.046±0.003.
+At HR@100, ALS converges to or overtakes CF/hybrid on every domain — finding
+strengthens vs #15 single-seed.
+**Cold-start V3 (3-term, mean ± std × 3):**
+k=1 — Yelp 0.991±0.019, Goodreads 0.962±0.018, Amazon 0.934±0.022.
+V3 weights at k=1: (LLM / user / item) = 0.03 / 0.13 / 0.83 (Yelp), 0.03 /
+0.27 / 0.70 (Goodreads), 0.07 / 0.30 / 0.63 (Amazon) — **item-bias term
+dominant, LLM weight ≤ 0.07 throughout**. The §4.2 'LLM weight ≈ 0 warm'
+finding generalises to the cold regime.
+**Cost & wallclock:** 3 parallel A10G containers, ~15 min wallclock total,
+~\$3 on Modal (was \$30+ on the llama-cpp-Q4 single-stream path; the engine
+swap + implicit ALS dropped the cost by an order of magnitude).
+Artifacts: `scratch/modal_results_n2000_synth_vllm_s{42,1,7}.json`,
+`scratch/aggregated_synth_3seed.{json,md}`, `analysis/aggregate_seeds.py`,
+`modal_vllm_eval.py`.
+
+### 15 — Multi-seed n=2,000 (audit-fixed) + multi-k retrieval + BERTScore  ⤷ SUPERSEDED BY #16
 `bash scripts/run_final_multiseed.sh` — three parallel Modal A10G containers, seeds
 42 / 1 / 7, audit-fixed harness (per-domain prompts, JSON-grammar constraint, stop
 tokens at `<|im_end|>` / `<|endoftext|>`, length cap, temperature=0). Each writes
