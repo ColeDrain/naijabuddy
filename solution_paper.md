@@ -182,17 +182,25 @@ ROUGE-L — verbatim longest-common-subsequence overlap against a single referen
 
 ### 4.4 Retrieval
 
-Stage-1 recall, leave-one-out over each domain's full candidate pool, for five strategies against a popularity baseline (HitRate@10):
+Stage-1 recall, leave-one-out over each domain's full candidate pool. We evaluate six strategies against a popularity baseline across four cutoffs (HitRate@k and NDCG@k for k ∈ {10, 20, 50, 100}). The headline table below reports the two informative endpoints, HR@10 and HR@100; the complete multi-k figures, including NDCG, are in the artifact JSON.
 
-| Domain | items | dense (content) | hybrid (dense+CF) | CF | ALS | popularity |
+| Method | Yelp HR@10 | Yelp HR@100 | Goodreads HR@10 | Goodreads HR@100 | Amazon HR@10 | Amazon HR@100 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Yelp | 10,415 | 0.002 | 0.088 | **0.089** | 0.067 | 0.019 |
-| Goodreads | 57,499 | 0.001 | 0.034 | **0.039** | 0.021 | 0.010 |
-| Amazon | 21,479 | 0.004 | 0.063 | **0.067** | 0.051 | 0.011 |
+| dense (content) | 0.002 | 0.013 | 0.001 | 0.007 | 0.004 | 0.023 |
+| hybrid (dense+CF) | 0.088 | 0.340 | 0.034 | 0.152 | 0.063 | 0.185 |
+| CF (item-item) | **0.089** | 0.338 | **0.039** | **0.161** | **0.067** | **0.196** |
+| ALS | 0.067 | **0.351** | 0.021 | 0.133 | 0.051 | 0.189 |
+| popularity | 0.019 | 0.077 | 0.010 | 0.053 | 0.011 | 0.046 |
 
-Pure dense content recall is the system's clear weakness — it barely clears, and on the book domains undershoots, the popularity baseline. The cause is structural: BGE embeds item *content*, but recovering a specific held-out item is a *collaborative* task driven by cross-user co-occurrence, which a content encoder does not model. The remedy is an **item-item collaborative-filtering signal blended with the dense score**, min-max normalised per user (dense/CF weight 20/80, set by a leave-one-out HitRate@10 sweep). Hybrid retrieval reaches HitRate@10 of 0.088 (Yelp), 0.034 (Goodreads) and 0.063 (Amazon) — **3.4–6× the popularity baseline**. The absolute figures are well below an earlier n = 350 run because the candidate pool is now far larger — 10K–57K items rather than 0.9K–8K — and ranking the gold item into the top 10 of 57K is a much harder target. At this scale **CF alone slightly *exceeds* the hybrid in every domain**: the dense term, 20% of the blend, mildly hurts, and the collaborative signal does all the work. Content retrieval is best treated as a fallback for genuinely cold users with no co-occurrence history.
+*Audit-fixed harness, seed 42; candidate pools 10,415 / 57,499 / 21,479 items. Bold = best per (domain, k) cell.*
 
-We also tested a *learned* collaborative recommender — implicit-feedback **ALS matrix factorisation** [Hu, Koren & Volinsky, 2008] over the same training matrix. It comfortably beats popularity and content retrieval, but **underperforms the simple item-item CF in every domain** — HitRate@10 0.067 / 0.021 / 0.051, against CF's 0.089 / 0.039 / 0.067. This is a live reproduction of Dacrema et al. [2019]: on sparse interaction data with a random hold-out, a well-tuned neighbourhood method beats a latent-factor model. We deploy the item-item CF as the Stage-1 signal and report ALS as evidence that the simple choice is the correct one — not as a failed experiment.
+Three findings drop out cleanly.
+
+**Pure content recall doesn't work.** BGE embeds item *content*, but recovering a specific held-out item is a *collaborative* task driven by cross-user co-occurrence, which a content encoder cannot model. Across all three domains at every cutoff, dense barely beats — and on the book domains undershoots — the popularity baseline. The remedy is an **item-item collaborative-filtering signal blended with the dense score**, min-max normalised per user (dense/CF weight 20/80, set by a leave-one-out HR@10 sweep). Hybrid recovers strongly: HR@10 reaches 3.4–6× the popularity baseline. Content retrieval is best treated as a fallback for genuinely cold users with no co-occurrence history.
+
+**At HR@10, item-item CF beats both its hybrid and the latent-factor ALS in every domain.** The collaborative signal carries 80% of the blend and does all the work; the 20% dense term mildly hurts. This is a live reproduction of Dacrema et al. [2019]: on sparse interaction data with a random hold-out, a well-tuned neighbourhood method beats a latent-factor model. We deploy item-item CF as the Stage-1 signal and report ALS as evidence that the simple choice is the correct one at the precision-sensitive cutoff — not as a failed experiment.
+
+**ALS catches up — or overtakes — at the HR@100 cutoff.** On Yelp the order at HR@100 becomes **ALS 0.351 > hybrid 0.340 > CF 0.338**, fully reversing the HR@10 order. On Amazon the same convergence: **CF 0.196 ≈ ALS 0.189 > hybrid 0.185**. On Goodreads ALS still trails (0.133 vs CF 0.161) but the gap collapses from ~1.85× at k=10 to ~1.21× at k=100. The interpretation is structural: neighbourhood methods *concentrate* probability mass on a handful of strong-co-occurrence neighbours — they win when only the top-10 is allowed — but their support is narrow, so deeper cutoffs reveal items they never considered. ALS's latent factors give it *broader coverage*, paying for it in top-10 precision but recovering more relevant items as the cutoff widens. For NaijaBuddy's deployment path — Stage-1 produces a candidate pool that the LLM reranks at ~50–100 items — the HR@100 column is arguably the more practically relevant figure, and at that scale ALS becomes a genuinely competitive Stage-1 alternative.
 
 **Comparability to sampled-metric protocols.** The HitRate@10 / NDCG@10 above rank the held-out item against each domain's *entire* candidate pool (10,415–57,499 items). Much of the recommender-systems literature instead reports *sampled* metrics — the held-out item against a small fixed pool of the gold item plus sampled negatives. The two are not interchangeable, and even two sampled metrics disagree unless the negative-sampling distribution matches (Krichene and Rendle, *On Sampled Metrics for Item Recommendation*, KDD 2020). To make our retrieval placeable against that literature, the harness also supports the sampled protocol; under 101 candidates (1 target + 100 **popularity-weighted** negatives — the harder variant), our hybrid retrieval scores:
 

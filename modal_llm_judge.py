@@ -126,6 +126,10 @@ def _parse_scores(text):
 @app.function(
     image=image,
     volumes={"/cache": cache_volume},
+    secrets=[
+        modal.Secret.from_name("groq-api-key"),
+        modal.Secret.from_name("cerebras-api-key"),
+    ],
     cpu=2.0,
     timeout=3600,
 )
@@ -240,12 +244,10 @@ def main(seed: int = 42, sample: int = 500, provider: str = "groq",
     print(f"judging via Modal: provider={provider} model={model} "
           f"seed={seed} sample={sample}  secret={secret_name!r}", flush=True)
 
-    # Reference the persistent Modal Secret by name and attach it to this
-    # call only with .with_options(). The secret's value is mounted into the
-    # container's env (as `env_key`) at runtime; it is never resident locally.
-    secret = modal.Secret.from_name(secret_name)
-    bound = judge.with_options(secrets=[secret])
-    results = bound.remote(seed=seed, sample=sample,
+    # Both secrets are declared statically on the function decorator above,
+    # so the container has GROQ_API_KEY and (if it exists) CEREBRAS_API_KEY
+    # in its env. The function picks the right one based on `provider`.
+    results = judge.remote(seed=seed, sample=sample,
                            provider=provider, model=model)
 
     os.makedirs("scratch", exist_ok=True)
