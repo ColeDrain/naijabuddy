@@ -147,11 +147,23 @@ def load_cache(enabled=True):
     return cache
 
 
+import threading
+_CACHE_LOCK = threading.Lock()
+
+
 def append_cache(rec):
-    """Append one generation record to the JSONL artifact log."""
+    """Append one generation record to the JSONL artifact log.
+
+    Lock-protected because under --vllm-url, the warm-eval loop dispatches
+    llm_score in a thread pool, and concurrent appends from multiple threads
+    can interleave bytes when records exceed PIPE_BUF (~4 KB). For our records
+    this is rare but not impossible — the lock removes the race entirely at
+    negligible cost (the writes are fast and contention is brief).
+    """
     os.makedirs(ARTIFACT_DIR, exist_ok=True)
-    with open(CACHE_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    with _CACHE_LOCK:
+        with open(CACHE_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 # =====================================================================
@@ -1041,31 +1053,74 @@ def run_eval(seed, args, embedder, llm, cache):
             rng.shuffle(sample)
             sample = sample[:args.llm_sample]
 
-            raws, means, actuals, rouges, gens, refs = [], [], [], [], [], []
-            t_start = time.time()
-            for n, held in enumerate(sample, 1):
+            # Each held-out user is independent: persona resolution + llm_score
+            # don't share state across users (the prompt-hash cache is
+            # lock-protected). Under --vllm-url, dispatch them concurrently so
+            # vLLM's PagedAttention can batch them at the GPU level — the
+            # whole point of the vLLM backend. Sequential fallback otherwise.
+            def _resolve_and_score(held):
                 user = held["user"]
                 if held["item"] not in item_info:
-                    continue
+                    return None
                 if args.persona_mode == "rag":
                     persona = build_rag_context(domain, train_by_user[user],
                                                 held["item"], item_info, item_vec)
                 else:
                     persona = persona_fn(user, train_by_user[user])
-                raw, review = llm_score(llm, persona, item_info[held["item"]], cache,
-                                        {"domain": domain, "user": user,
-                                         "item": held["item"], "seed": seed,
-                                         "stage": "warm"})
+                raw, review = llm_score(
+                    llm, persona, item_info[held["item"]], cache,
+                    {"domain": domain, "user": user, "item": held["item"],
+                     "seed": seed, "stage": "warm"},
+                )
+                return held, user, raw, review
+
+            t_start = time.time()
+            raws, means, actuals, rouges, gens, refs = [], [], [], [], [], []
+            if getattr(args, "vllm_url", None):
+                # vLLM scales with concurrent client requests; 32 is well below
+                # the --n_parallel-equivalent ceiling vLLM advertises for a 3B
+                # model on A10G but high enough to saturate batching.
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                workers = 32
+                results = [None] * len(sample)
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    futs = {ex.submit(_resolve_and_score, h): i
+                            for i, h in enumerate(sample)}
+                    done = 0
+                    for fut in as_completed(futs):
+                        idx = futs[fut]
+                        results[idx] = fut.result()
+                        done += 1
+                        if done <= 3 or done % 100 == 0 or done == len(sample):
+                            rate = (time.time() - t_start) / done
+                            eta = rate * (len(sample) - done)
+                            print(f"    [LLM] {done}/{len(sample)}  "
+                                  f"{rate:.2f}s/call  ETA {eta/60:.1f} min  "
+                                  f"(parallel={workers})")
+                ordered_results = results
+            else:
+                ordered_results = []
+                for n, held in enumerate(sample, 1):
+                    r = _resolve_and_score(held)
+                    ordered_results.append(r)
+                    if n <= 3 or n % 25 == 0:
+                        rate = (time.time() - t_start) / n
+                        eta = rate * (len(sample) - n)
+                        print(f"    [LLM] {n}/{len(sample)}  {rate:.1f}s/call  "
+                              f"ETA {eta/60:.1f} min")
+
+            # Reassemble in original order so RMSE/ROUGE/Sem-BGE accumulate
+            # the same way the sequential path would.
+            for r in ordered_results:
+                if r is None:
+                    continue
+                held, user, raw, review = r
                 raws.append(raw)
                 means.append(user_mean[user])
                 actuals.append(held["rating"])
                 rouges.append(rouge_l(review, held["review"]))
                 gens.append(review)
                 refs.append(held["review"])
-                if n <= 3 or n % 25 == 0:
-                    rate = (time.time() - t_start) / n
-                    eta = rate * (len(sample) - n)
-                    print(f"    [LLM] {n}/{len(sample)}  {rate:.1f}s/call  ETA {eta/60:.1f} min")
 
             # SYNC: calibration formula from agent.get_calibrated_rating (warm-user path).
             # NOTE: best_alpha below is the test-set-minimising point of the sweep -
