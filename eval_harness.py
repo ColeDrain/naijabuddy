@@ -71,7 +71,10 @@ DOMAINS = {"yelp": "Yelp", "goodreads": "Goodreads", "amazon": "Amazon"}
 ALPHA_GRID = [round(0.1 * i, 1) for i in range(0, 11)]  # 0.0 .. 1.0
 
 ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_artifacts")
-CACHE_PATH = os.path.join(ARTIFACT_DIR, "llm_cache.jsonl")
+CACHE_PATH = os.path.join(
+    ARTIFACT_DIR,
+    os.environ.get("NAIJABUDDY_CACHE_FILE", "llm_cache.jsonl"),
+)
 
 csv.field_size_limit(16 * 1024 * 1024)
 
@@ -327,7 +330,11 @@ def synthesize_persona(llm, domain, train_for_user, item_info, cache=None, meta=
     persona = f"A real {domain} user."
     if llm is not None:
         try:
-            resp = llm(prompt, max_tokens=192, temperature=0.3)
+            resp = llm(
+                prompt, max_tokens=192, temperature=0.3,
+                top_p=0.9, repeat_penalty=1.05, seed=1234,
+                stop=["<|im_end|>", "<|endoftext|>"],
+            )
             persona = resp["choices"][0]["text"].strip() or persona
         except Exception as e:
             print(f"  [synth] inference error: {e}")
@@ -346,16 +353,47 @@ def synthesize_persona(llm, domain, train_for_user, item_info, cache=None, meta=
 # LLM SCORING  (raw rating + generated review)
 # =====================================================================
 
+# Domain-tailored vocabulary and labels — bias the LLM toward the right kind of
+# review for each platform (the keyword list directly influences ROUGE-L overlap
+# with real reviews; using restaurant words for book reviews actively hurts).
+_DOMAIN_LABELS = {
+    "Yelp": "restaurant or local business",
+    "Goodreads": "book",
+    "Amazon": "book",
+}
+_DOMAIN_VOCAB = {
+    "Yelp": "food, service, ambience, value, location",
+    "Goodreads": "plot, characters, prose, pacing, writing",
+    "Amazon": "story, characters, writing, value, content",
+}
+
+# JSON-grammar constraint — every LLM response is forced to be parseable JSON
+# with a numeric rating in [1, 5] and a string review. Eliminates the silent
+# (4.0, '') fallback that was masking malformed-JSON failures.
+try:
+    from llama_cpp import LlamaGrammar as _LlamaGrammar
+    _RATING_REVIEW_GRAMMAR = _LlamaGrammar.from_json_schema(json.dumps({
+        "type": "object",
+        "properties": {
+            "rating": {"type": "number", "minimum": 1, "maximum": 5},
+            "review": {"type": "string", "maxLength": 300},
+        },
+        "required": ["rating", "review"],
+    }))
+except Exception:
+    _RATING_REVIEW_GRAMMAR = None
+
+
 # SYNC: this template is identical to the prompt in agent.py -> simulate_review().
 # If that prompt changes, update this and re-run the harness.
 REVIEW_PROMPT = """<|im_start|>system
 You are a highly advanced simulation agent modeling a specific human persona.
-Your objective is to generate an authentic, context-aware star rating and written review for a product or service.
+Your objective is to generate an authentic, context-aware star rating and written review for a {domain_label}.
 
 USER PERSONA PROFILE:
 {persona}
 
-TARGET PRODUCT/SERVICE DETAILS:
+TARGET DETAILS:
 - Name: {name}
 - Category: {category}
 - Specific Details: {description}
@@ -363,16 +401,16 @@ TARGET PRODUCT/SERVICE DETAILS:
 CULTURAL STYLE GUIDELINES:
 The target audience of this evaluation resides in Nigeria. Adjust your communication style, tone, vocabulary, and references to sound exactly like a real person belonging to this persona in Nigeria. Use authentic local vocabulary, slang, and cultural references naturally (e.g., "Abeg", "God when", "Wahala", "No cap", "Strict Nigerian Parent" style, "VI Tech Bro" jargon) where appropriate.
 
-CRITICAL CONSTRAINTS FOR ROUGE OVERLAP:
-1. Keep the review concise, realistic, and highly readable (2 to 4 sentences max).
-2. Do not use overly poetic or academic vocabulary. Use standard everyday review keywords (e.g., "food", "service", "clean", "good", "bad", "spicy", "price").
+CRITICAL CONSTRAINTS:
+1. Write the review in **one or two sentences**, matching the typical length of a real {domain_label} review.
+2. Use standard everyday vocabulary appropriate to a {domain_label} review (e.g., {domain_vocab}).
 3. Do not mention that you are an AI or an agent.
 
 OUTPUT FORMAT (Strict JSON):
 Return ONLY a valid JSON object. Do not include any markdown backticks or extra text outside the JSON.
 {{
   "rating": [Generate a realistic float rating between 1.0 and 5.0 based strictly on how this persona would rate this item],
-  "review": "[Write the simulated review text here]"
+  "review": "[Write the simulated review text here in one or two sentences]"
 }}
 <|im_end|>
 <|im_start|>assistant
@@ -388,11 +426,14 @@ def llm_score(llm, persona, item, cache=None, meta=None):
     re-sampling is intentional: it makes the reported numbers stable across
     re-runs and only spends GPU when the prompt text actually changes.
     """
+    _dom = (meta or {}).get("domain", "Yelp")
     prompt = REVIEW_PROMPT.format(
         persona=persona,
         name=item["name"],
         category=item["category"],
         description=item["description"],
+        domain_label=_DOMAIN_LABELS.get(_dom, "product or service"),
+        domain_vocab=_DOMAIN_VOCAB.get(_dom, "quality, value, experience"),
     )
     h = _prompt_hash(prompt)
     if cache is not None and h in cache:
@@ -401,7 +442,12 @@ def llm_score(llm, persona, item, cache=None, meta=None):
 
     raw_output = ""
     try:
-        response = llm(prompt, max_tokens=256, temperature=0.2)
+        response = llm(
+            prompt, max_tokens=256, temperature=0.0,
+            top_p=1.0, repeat_penalty=1.1, seed=1234,
+            stop=["<|im_end|>", "<|endoftext|>"],
+            grammar=_RATING_REVIEW_GRAMMAR,
+        )
         raw_output = response["choices"][0]["text"].strip()
     except Exception as e:
         print(f"  [llm] inference error: {e}")
@@ -873,7 +919,10 @@ def run_eval(seed, args, embedder, llm, cache):
     results = {}
     rng = random.Random(seed)
 
+    _sel = [s.strip().lower() for s in (args.domains or "").split(",") if s.strip()]
     for stem, domain in DOMAINS.items():
+        if _sel and stem not in _sel:
+            continue
         print(f"\n{'-' * 66}\nDOMAIN: {domain}  (seed={seed})\n{'-' * 66}")
         rows = load_domain(stem)
         train_rows, test_rows, train_by_user = leave_one_out(rows, seed)
@@ -1072,6 +1121,9 @@ def main():
                     help="truncated history sizes for --cold-start (default 1,2,3)")
     ap.add_argument("--cold-sample", type=int, default=100,
                     help="users per domain per k for --cold-start (default 100)")
+    ap.add_argument("--domains", type=str, default=None,
+                    help="comma-separated subset of domains to run (e.g. 'amazon'); "
+                         "default = all of yelp,goodreads,amazon")
     ap.add_argument("--bertscore", action="store_true",
                     help="add semantic review-similarity (BGE; true BERTScore if installed)")
     ap.add_argument("--persona-mode", choices=["template", "synth", "rag"], default="template",

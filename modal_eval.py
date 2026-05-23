@@ -12,6 +12,15 @@ import modal
 
 app = modal.App("naijabuddy-eval-sweep")
 
+# Persistent cache volume — survives Modal worker preemption. Without this, a
+# preempted A10G container loses every LLM call written to the in-container
+# cache and the auto-restart redoes them all from scratch. With it, the
+# restart mounts the same volume, the cache is intact, and only the tail of
+# LLM calls since the last commit needs to be re-issued.
+cache_volume = modal.Volume.from_name(
+    "naijabuddy-eval-cache", create_if_missing=True
+)
+
 
 def download_models():
     """Build step: pre-download the model files into the image."""
@@ -30,6 +39,17 @@ def download_models():
     )
     print("Pre-downloading BGE semantic embedding model...")
     SentenceTransformer("BAAI/bge-small-en-v1.5")
+
+    # Pre-download RoBERTa-large for canonical BERTScore (avoid a ~1.4 GB
+    # download on first --bertscore call inside an eval container).
+    print("Pre-downloading RoBERTa-large for BERTScore...")
+    try:
+        from transformers import AutoTokenizer, AutoModel
+        AutoTokenizer.from_pretrained("roberta-large")
+        AutoModel.from_pretrained("roberta-large")
+    except Exception as e:
+        print(f"  (RoBERTa-large prefetch failed, will lazy-load: {e})")
+
     print("Model caching complete.")
 
 
@@ -39,7 +59,7 @@ image = (
     .apt_install("git", "build-essential", "cmake", "libopenblas-dev")
     .pip_install(
         "numpy", "sentence-transformers", "duckdb", "huggingface-hub",
-        "fastapi", "pydantic", "uvicorn", "rouge-score",
+        "fastapi", "pydantic", "uvicorn", "rouge-score", "bert-score",
     )
     # The CUDA stub libs are needed only to *link* llama-cpp at build time.
     # They must NOT persist to runtime — a stub libcuda shadows the real GPU
@@ -70,16 +90,35 @@ image = (
 )
 
 
-@app.function(image=image, gpu="a10g", timeout=36000)
+@app.function(image=image, gpu="a10g", timeout=36000,
+              volumes={"/app/eval_artifacts": cache_volume})
 def run_eval_sweep(sample: int, persona_mode: str, seed: int,
                    bertscore: bool, cold_start: bool, cold_sample: int):
     """Execute eval_harness.py inside the GPU container, streaming its output."""
     import subprocess
     import sys
+    import threading
 
     os.environ["HF_HOME"] = "/root/models/hf_home"
     os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/root/models/sentence_transformers"
     os.environ["NAIJABUDDY_MODEL_PATH"] = "/root/models/qwen2.5-3b-instruct-q4_k_m.gguf"
+    # Per-seed cache filename so 3 parallel containers sharing the same Modal
+    # volume don't clobber each other's appends to a single file.
+    os.environ["NAIJABUDDY_CACHE_FILE"] = f"llm_cache_s{seed}.jsonl"
+
+    # Background thread that flushes cache writes to the persistent volume
+    # every ~3 min. With preemption, only the tail since the last commit is
+    # lost; everything before survives in the volume and is reused on restart.
+    _commit_stop = threading.Event()
+    def _commit_loop():
+        while not _commit_stop.wait(180):
+            try:
+                cache_volume.commit()
+                print("[volume] committed", flush=True)
+            except Exception as e:
+                print(f"[volume] commit failed: {e}", flush=True)
+    committer = threading.Thread(target=_commit_loop, daemon=True)
+    committer.start()
 
     cmd = [
         sys.executable, "-u", "/app/eval_harness.py",
@@ -93,19 +132,28 @@ def run_eval_sweep(sample: int, persona_mode: str, seed: int,
         cmd += ["--cold-start", "--cold-sample", str(cold_sample)]
     print(f"Running: {' '.join(cmd)}", flush=True)
 
-    process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd="/app", bufsize=1,
-    )
-    while True:
-        line = process.stdout.readline()
-        if not line and process.poll() is not None:
-            break
-        if line:
-            print(line, end="", flush=True)
-    process.wait()
-    if process.returncode != 0:
-        raise RuntimeError(f"Harness failed with exit code {process.returncode}")
+    try:
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, cwd="/app", bufsize=1,
+        )
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                print(line, end="", flush=True)
+        process.wait()
+        if process.returncode != 0:
+            raise RuntimeError(f"Harness failed with exit code {process.returncode}")
+    finally:
+        _commit_stop.set()
+        committer.join(timeout=5)
+        try:
+            cache_volume.commit()
+            print("[volume] final commit done", flush=True)
+        except Exception as e:
+            print(f"[volume] final commit failed: {e}", flush=True)
 
     results_json = results_md = ""
     if os.path.exists("/app/evaluation_results.json"):
