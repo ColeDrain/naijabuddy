@@ -564,8 +564,8 @@ def als_factorize(R, factors=64, iterations=12, reg=0.1, alpha=40.0, seed=42):
 
 
 def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
-                   k=10, persona_fn=None, candidate_pool=None, seed=0,
-                   pop_distractors=False):
+                   k_values=(10, 20, 50, 100), persona_fn=None,
+                   candidate_pool=None, seed=0, pop_distractors=False):
     """
     HitRate@k / NDCG@k for five leave-one-out recall strategies, all evaluated
     on the same users and item pool so they are directly comparable:
@@ -698,8 +698,12 @@ def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
             slate = distract + [gold_idx[u]]
             slate_list.append(np.asarray(slate, dtype=np.int64))
 
+    max_k = max(k_values)
+
     def score_run(row_fn):
-        hits = ndcg = 0.0
+        """Compute HitRate@k and NDCG@k for every k in k_values in one pass."""
+        hits = {kv: 0 for kv in k_values}
+        ndcg = {kv: 0.0 for kv in k_values}
         for u in range(len(test_users)):
             scores = np.array(row_fn(u), dtype=np.float32, copy=True)
             for ti in train_idx_sets[u]:
@@ -709,35 +713,35 @@ def eval_retrieval(domain, train_by_user, test_rows, item_info, embedder,
                 sl = slate_list[u]
                 masked[sl] = scores[sl]
                 scores = masked
-            topk = np.argpartition(-scores, k)[:k]
+            topk = np.argpartition(-scores, max_k)[:max_k]
             topk = topk[np.argsort(-scores[topk])]
             ranked = list(topk)
             g = gold_idx[u]
             if g in ranked:
                 rank = ranked.index(g) + 1  # 1-indexed
-                hits += 1
-                ndcg += 1.0 / math.log2(rank + 1)
+                for kv in k_values:
+                    if rank <= kv:
+                        hits[kv] += 1
+                        ndcg[kv] += 1.0 / math.log2(rank + 1)
         n = len(test_users)
-        return hits / n, ndcg / n
-
-    hr_raw, ndcg_raw = score_run(lambda u: sims_raw[u])
-    hr_clean, ndcg_clean = score_run(lambda u: sims_clean[u])
-    hr_hybrid, ndcg_hybrid = score_run(lambda u: hybrid_scores[u])
-    hr_cf, ndcg_cf = score_run(lambda u: cf_scores[u])
-    hr_als, ndcg_als = score_run(lambda u: als_scores[u])
-    hr_pop, ndcg_pop = score_run(lambda u: pop_scores)
+        out = {}
+        for kv in k_values:
+            out[f"hit@{kv}"] = hits[kv] / n
+            out[f"ndcg@{kv}"] = ndcg[kv] / n
+        return out
 
     return {
         "n_users": len(test_users),
         "n_items": len(item_ids),
         "candidate_pool": candidate_pool or len(item_ids),
         "distractors": ("popularity" if pop_distractors else "uniform"),
-        "dense_raw": {"hit@10": hr_raw, "ndcg@10": ndcg_raw},
-        "dense": {"hit@10": hr_clean, "ndcg@10": ndcg_clean},
-        "hybrid": {"hit@10": hr_hybrid, "ndcg@10": ndcg_hybrid},
-        "cf": {"hit@10": hr_cf, "ndcg@10": ndcg_cf},
-        "als": {"hit@10": hr_als, "ndcg@10": ndcg_als},
-        "popularity": {"hit@10": hr_pop, "ndcg@10": ndcg_pop},
+        "k_values": list(k_values),
+        "dense_raw": score_run(lambda u: sims_raw[u]),
+        "dense": score_run(lambda u: sims_clean[u]),
+        "hybrid": score_run(lambda u: hybrid_scores[u]),
+        "cf": score_run(lambda u: cf_scores[u]),
+        "als": score_run(lambda u: als_scores[u]),
+        "popularity": score_run(lambda u: pop_scores),
     }
 
 
@@ -1054,6 +1058,7 @@ def run_eval(seed, args, embedder, llm, cache):
                               candidate_pool=args.candidate_pool, seed=seed,
                               pop_distractors=args.pop_distractors)
         if retr:
+            _kvs = retr.get("k_values", [10])
             for label, key in [("dense (boilerplate)", "dense_raw"),
                                ("dense (de-boilerplated)", "dense"),
                                ("hybrid (dense+CF)", "hybrid"),
@@ -1061,7 +1066,9 @@ def run_eval(seed, args, embedder, llm, cache):
                                ("ALS matrix factorisation", "als"),
                                ("popularity baseline", "popularity")]:
                 s = retr[key]
-                print(f"    {label:<25}: HitRate@10={s['hit@10']:.4f}  NDCG@10={s['ndcg@10']:.4f}")
+                hr_disp = " ".join(f"@{kv}={s.get(f'hit@{kv}', 0):.4f}" for kv in _kvs)
+                ndcg_disp = " ".join(f"@{kv}={s.get(f'ndcg@{kv}', 0):.4f}" for kv in _kvs)
+                print(f"    {label:<25}: HR {hr_disp}  |  NDCG {ndcg_disp}")
             domain_result["retrieval"] = retr
 
         # ---- Cold-start ---------------------------------------------------
