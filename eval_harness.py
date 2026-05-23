@@ -1082,14 +1082,14 @@ def run_eval(seed, args, embedder, llm, cache):
                 # model on A10G but high enough to saturate batching.
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 workers = 32
-                results = [None] * len(sample)
+                ordered_results = [None] * len(sample)
                 with ThreadPoolExecutor(max_workers=workers) as ex:
                     futs = {ex.submit(_resolve_and_score, h): i
                             for i, h in enumerate(sample)}
                     done = 0
                     for fut in as_completed(futs):
                         idx = futs[fut]
-                        results[idx] = fut.result()
+                        ordered_results[idx] = fut.result()
                         done += 1
                         if done <= 3 or done % 100 == 0 or done == len(sample):
                             rate = (time.time() - t_start) / done
@@ -1097,7 +1097,6 @@ def run_eval(seed, args, embedder, llm, cache):
                             print(f"    [LLM] {done}/{len(sample)}  "
                                   f"{rate:.2f}s/call  ETA {eta/60:.1f} min  "
                                   f"(parallel={workers})")
-                ordered_results = results
             else:
                 ordered_results = []
                 for n, held in enumerate(sample, 1):
