@@ -118,7 +118,7 @@ gives a small, consistent lift to review-text fidelity. Retrieval helps the
 generative sub-task, not the regression sub-task.
 Artifacts: `scratch/eval_rag_results.json`, `scratch/eval_rag.log`.
 
-### 10 — n=2,000 re-evaluation  ★ CURRENT CANONICAL
+### 10 — n=2,000 re-evaluation  ⤷ SUPERSEDED BY #15 (multi-seed)
 Datasets regenerated at 6× scale: `python local_data_prep.py` (`LIMIT_USERS =
 2000`) streams the three HF source datasets, extracts a dense 3-core, caps each
 to its 2,000 densest users → `data/*_dense.csv`. Counts: interactions
@@ -193,6 +193,46 @@ near-identical across domains: k1 ≈ 0.6–0.7, k2 0.5, k3 0.4, warm 0.1.
 the regime switch, now measured at the same n as the warm headline. Abstract /
 §7 cold-start range updated to 13–20%.
 Artifact: `scratch/modal_results_n20_template_s42.{json,md}`.
+
+### 15 — Multi-seed n=2,000 (audit-fixed) + multi-k retrieval + BERTScore  ★ NEW CANONICAL
+`bash scripts/run_final_multiseed.sh` — three parallel Modal A10G containers, seeds
+42 / 1 / 7, audit-fixed harness (per-domain prompts, JSON-grammar constraint, stop
+tokens at `<|im_end|>` / `<|endoftext|>`, length cap, temperature=0). Each writes
+to its own per-seed cache file (`llm_cache_s{seed}.jsonl`) on the persistent
+volume `naijabuddy-eval-cache`; daemon-thread commits every 180s give preemption
+resilience. Same n=2,000 dense datasets, full leave-one-out, retrieval evaluated
+at HR@k / NDCG@k for k ∈ {10, 20, 50, 100}, BERTScore-F1 computed canonically via
+the `bert-score` package + RoBERTa-large.
+**Warm-start RMSE (mean ± std across 3 seeds):**
+- Yelp:      V2 0.9938 ± 0.0052 — reproduces #10 single-seed 0.990 to 3 decimals
+- Goodreads: V2 0.8992 ± 0.0336 — slightly above #10's 0.876
+- Amazon:    V2 0.8412 ± 0.0152 — slightly under #10's 0.851
+**Review quality:** Sem-BGE 0.735/0.631/0.649 (matches #10); BERTScore-F1
+0.842/0.844/0.849, std ≤ 0.0005 across seeds — publication-grade tight.
+**Multi-k retrieval — the new finding:** at HR@10, item-item CF beats hybrid and
+ALS in every domain (reproducing #14). At HR@100 the order reverses: on Yelp ALS
+0.351 > hybrid 0.340 > CF 0.338; on Amazon CF 0.196 ≈ ALS 0.189 > hybrid 0.185;
+on Goodreads ALS still trails CF but the gap collapses from ×1.85 (k=10) to
+×1.21 (k=100). Interpretation: neighbourhood methods concentrate mass on
+strong-co-occurrence neighbours (precision at top-10), latent factors give
+broader coverage (recovery at deeper cutoffs). For the ~50–100-item rerank
+pool NaijaBuddy actually deploys, ALS becomes a competitive Stage-1 alternative.
+**Cold-start at n=2,000 per k (mean ± std across 3 seeds, V3 3-term anchor):**
+- Yelp:      k1 → 1.005 ± 0.018, k2 → 0.997 ± 0.018, k3 → 0.978 ± 0.012
+- Goodreads: k1 → 0.928 ± 0.014, k2 → 0.939 ± 0.014, k3 → 0.937 ± 0.025
+- Amazon:    k1 → 0.939 ± 0.019, k2 → 0.910 ± 0.032, k3 → 0.883 ± 0.036
+V3 weight schedule across seeds: LLM weight 0.0–0.2, user weight 0.2–0.6, item
+weight 0.3–0.8 — the *item-bias term* is doing almost all the cold-start work,
+confirming the "regime-switch" reading from #10 / §4.2.
+**Cost & infra postmortem:** ran ~$30 + $10 top-up on Modal because
+llama-cpp-python single-stream on A10G is memory-bandwidth-bound at ~150 tok/s
+(roughly the same as a M-series Mac CPU running the same GGUF), so three
+"parallel" containers tripled cost without tripling compute-per-dollar. For any
+future eval at this scale, switch to vLLM/TGI batched (~30× the throughput on
+the same GPU) or to a hosted endpoint (Groq GPT-OSS-120B at $0.15/$0.60 per M
+tokens). Logged to memory `architecture_llm_serving.md` so it does not repeat.
+Artifacts: `scratch/modal_results_n2000_template_s{42,1,7}.{json,md}`,
+`scratch/aggregated_n2000_3seed.{json,md}`, `analysis/aggregate_seeds.py`.
 
 ### 14 — ALS matrix-factorization retrieval (§4.4)
 `python eval_harness.py --no-llm` (local, no GPU — pure-NumPy ALS). Implicit-

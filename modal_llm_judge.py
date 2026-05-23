@@ -191,25 +191,36 @@ def judge(seed: int, sample: int, provider: str, model: str):
                 review=r.get("generated_review", ""),
             )
             text = None
+            last_err = None
             for attempt in range(3):
                 try:
                     resp = client.chat.completions.create(
                         model=model,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.0,
-                        max_tokens=64,
-                        response_format={"type": "json_object"},
+                        max_tokens=512,
                     )
                     text = resp.choices[0].message.content.strip()
                     break
-                except Exception:
+                except Exception as e:
+                    last_err = e
                     if attempt < 2:
                         time.sleep(2 ** attempt)
                     else:
                         text = None
+            if text is None and i <= 3 and last_err is not None:
+                # Surface the first error so silent-retry doesn't hide auth/
+                # model-id/rate-limit issues. Only the first 3 to avoid spam.
+                print(f"  [call {i}] api error: {type(last_err).__name__}: {last_err}",
+                      flush=True)
             bf, cr = _parse_scores(text or "")
             if bf is not None:
                 bfs.append(bf); crs.append(cr); n_parsed += 1
+            elif i <= 2 and text:
+                # Surface the first two unparseable responses to diagnose
+                # whether the model is producing JSON or some other format.
+                print(f"  [call {i}] unparseable response (first 400 chars):\n"
+                      f"    {text[:400]!r}", flush=True)
             if i % 50 == 0:
                 el = time.time() - t0
                 rate = el / i
