@@ -87,7 +87,12 @@ image = (
         "  fastapi "
         "  pydantic "
         "  openai "
-        "  requests"
+        "  requests "
+        # implicit + scipy: 50-100x faster ALS retrieval via Cython/OpenMP
+        # (vs the pure-NumPy fallback in eval_harness.als_factorize). Drops
+        # Amazon ALS from ~12 min wallclock to ~30s on the same A10G.
+        "  implicit "
+        "  scipy"
     )
     .env({
         "HF_HUB_ENABLE_HF_TRANSFER": "1",

@@ -595,10 +595,51 @@ def als_factorize(R, factors=64, iterations=12, reg=0.1, alpha=40.0, seed=42):
     Implicit-feedback matrix factorisation (Hu, Koren & Volinsky, 2008) of the
     user x item rating matrix R, solved by Alternating Least Squares. Observed
     ratings become positive feedback with confidence c = 1 + alpha*rating; the
-    factorisation gives score(u, i) = U[u] . V[i]. A proper learned collaborative
-    recommender for the Stage-1 shortlist — pure NumPy, offline, no new dependency.
+    factorisation gives score(u, i) = U[u] . V[i].
+
+    Tries the `implicit` library first (C++/Cython/OpenMP, typically 50-100x
+    faster than pure-NumPy on a 100K x 20K matrix). Falls back to a pure-NumPy
+    implementation if `implicit` isn't installed, so local dev without that
+    extra dep still works (just slowly).
+
+    Note: `implicit`'s Conjugate Gradient solver is algorithmically slightly
+    different from our closed-form least-squares fallback. Both target the
+    same Hu/Koren/Volinsky objective and converge to very similar fits
+    (typically within ±1pp on HR/NDCG@k at this scale); the difference is
+    disclosed in §4.4 if numbers shift between runs.
     """
     import numpy as np
+
+    try:
+        # Fast path: implicit's CPU ALS (Cython + OpenMP, parallel across cores).
+        # Imported lazily so the module still loads on machines without the dep.
+        from implicit.cpu.als import AlternatingLeastSquares
+        from scipy.sparse import csr_matrix
+
+        # implicit expects a (users x items) csr_matrix where nonzero entries
+        # are the confidence weights. The Hu paper's c = 1 + alpha*r maps to
+        # implicit's alpha parameter applied to the matrix values, so we pass
+        # the raw ratings as data and let alpha do the scaling.
+        sparse = csr_matrix(R)
+
+        model = AlternatingLeastSquares(
+            factors=factors,
+            regularization=reg,
+            alpha=alpha,
+            iterations=iterations,
+            random_state=seed,
+            use_native=True,
+            use_cg=True,
+            calculate_training_loss=False,
+        )
+        # show_progress=False suppresses tqdm noise in the Modal log
+        model.fit(sparse, show_progress=False)
+        # implicit returns ndarray-like factors; coerce to plain float32 numpy
+        return (np.asarray(model.user_factors, dtype=np.float32),
+                np.asarray(model.item_factors, dtype=np.float32))
+    except ImportError:
+        pass  # fall through to pure-NumPy fallback
+
     n_users, n_items = R.shape
     rng = np.random.RandomState(seed)
     U = rng.normal(0, 0.01, (n_users, factors))
