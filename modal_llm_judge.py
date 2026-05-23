@@ -13,16 +13,28 @@ Two reasons to run this on Modal rather than locally:
   2. Survives the local machine sleeping; the goal-driven overnight run does
      not depend on the user's Mac being awake.
 
-The local entrypoint reads the local env var (GROQ_API_KEY or CEREBRAS_API_KEY)
-and ships it into the container as a per-call Modal Secret — proper credential
-plumbing, key never appears in function args or logs.
+The API key is supplied via a persistent Modal Secret — the key never leaves
+Modal's encrypted secret store and is not present in your local shell.
+
+One-time setup (Modal dashboard → Secrets → New secret → Custom):
+    Secret name: groq-api-key
+    Key:         GROQ_API_KEY
+    Value:       gsk_...
+
+    (and/or)
+
+    Secret name: cerebras-api-key
+    Key:         CEREBRAS_API_KEY
+    Value:       csk-...
+
+The Modal Secret *name* (the label) must match SECRET_NAMES below; the
+*env-var key inside the secret* must match the env name in PROVIDERS so the
+container's `os.environ[...]` lookup hits.
 
 Usage:
-    export GROQ_API_KEY=...               # or CEREBRAS_API_KEY=...
-    modal run modal_llm_judge.py --seed 42 --sample 500
-
-    # explicit provider / model override:
-    modal run modal_llm_judge.py --seed 1 --provider cerebras --model gpt-oss-120b
+    modal run modal_llm_judge.py --seed 42 --sample 500                  # default groq
+    modal run modal_llm_judge.py --seed 1 --provider cerebras            # explicit
+    modal run modal_llm_judge.py --seed 7 --model gpt-oss-120b           # override model
 """
 import collections
 import json
@@ -55,6 +67,13 @@ PROVIDERS = {
         "https://api.cerebras.ai/v1",
         "gpt-oss-120b",
     ),
+}
+
+# Maps provider → name of the Modal Secret holding that provider's API key.
+# Create these on the Modal dashboard (see module docstring).
+SECRET_NAMES = {
+    "groq": "groq-api-key",
+    "cerebras": "cerebras-api-key",
 }
 
 JUDGE_PROMPT = """You are an expert evaluator of recommender-system review generations.
@@ -207,42 +226,25 @@ def judge(seed: int, sample: int, provider: str, model: str):
     return results
 
 
-def _resolve_provider_local(arg_provider):
-    """Local-side: pick provider explicitly or auto-detect from env."""
-    if arg_provider:
-        if arg_provider not in PROVIDERS:
-            sys.exit(f"unknown provider {arg_provider!r}")
-        return arg_provider
-    for p, (env_key, _, _) in PROVIDERS.items():
-        if os.environ.get(env_key):
-            print(f"auto-selected provider={p} (from {env_key})")
-            return p
-    sys.exit(
-        "no API key found locally. Set one of: "
-        + ", ".join(env for env, _, _ in PROVIDERS.values())
-    )
-
-
 @app.local_entrypoint()
-def main(seed: int = 42, sample: int = 500, provider: str = "",
+def main(seed: int = 42, sample: int = 500, provider: str = "groq",
          model: str = ""):
     """
     modal run modal_llm_judge.py --seed 42 --sample 500
     """
-    provider = _resolve_provider_local(provider or None)
+    if provider not in PROVIDERS:
+        sys.exit(f"unknown provider {provider!r}; pick from {list(PROVIDERS)}")
     env_key, _, default_model = PROVIDERS[provider]
-    api_key = os.environ.get(env_key)
-    if not api_key:
-        sys.exit(f"{env_key} not set in local env")
     model = model or default_model
+    secret_name = SECRET_NAMES[provider]
     print(f"judging via Modal: provider={provider} model={model} "
-          f"seed={seed} sample={sample}", flush=True)
+          f"seed={seed} sample={sample}  secret={secret_name!r}", flush=True)
 
-    # Build a per-call ephemeral Modal Secret from the local env var, attach
-    # it to the function with .with_options(). The key flows through Modal's
-    # encrypted secret channel rather than as a plain function argument.
-    ephemeral_secret = modal.Secret.from_dict({env_key: api_key})
-    bound = judge.with_options(secrets=[ephemeral_secret])
+    # Reference the persistent Modal Secret by name and attach it to this
+    # call only with .with_options(). The secret's value is mounted into the
+    # container's env (as `env_key`) at runtime; it is never resident locally.
+    secret = modal.Secret.from_name(secret_name)
+    bound = judge.with_options(secrets=[secret])
     results = bound.remote(seed=seed, sample=sample,
                            provider=provider, model=model)
 
