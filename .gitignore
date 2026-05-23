@@ -48,3 +48,13 @@ eval_artifacts/
 
 # Log files
 *.log
+
+# Large regenerable data — n=2,000 dense datasets are rebuilt by
+# `python local_data_prep.py`; the cross-domain Amazon Books+Movies CSVs
+# are pulled by `hf download McAuley-Lab/Amazon-Reviews-2023 ...`. Committing
+# them adds ~1.6 GB to git history forever and the docs already declare them
+# regenerable (see numbers_integrity.md).
+data/yelp_dense.csv
+data/goodreads_dense.csv
+data/amazon_dense.csv
+data/amazon_crossdomain/
