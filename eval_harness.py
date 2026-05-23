@@ -370,18 +370,76 @@ _DOMAIN_VOCAB = {
 # JSON-grammar constraint — every LLM response is forced to be parseable JSON
 # with a numeric rating in [1, 5] and a string review. Eliminates the silent
 # (4.0, '') fallback that was masking malformed-JSON failures.
+#
+# The schema is defined once as a plain dict so both backends can use it:
+#   - llama-cpp consumes it via LlamaGrammar.from_json_schema
+#   - vLLM consumes it via the OpenAI-API `extra_body={"guided_json": ...}`
+_RATING_REVIEW_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rating": {"type": "number", "minimum": 1, "maximum": 5},
+        "review": {"type": "string", "maxLength": 300},
+    },
+    "required": ["rating", "review"],
+}
 try:
     from llama_cpp import LlamaGrammar as _LlamaGrammar
-    _RATING_REVIEW_GRAMMAR = _LlamaGrammar.from_json_schema(json.dumps({
-        "type": "object",
-        "properties": {
-            "rating": {"type": "number", "minimum": 1, "maximum": 5},
-            "review": {"type": "string", "maxLength": 300},
-        },
-        "required": ["rating", "review"],
-    }))
+    _RATING_REVIEW_GRAMMAR = _LlamaGrammar.from_json_schema(
+        json.dumps(_RATING_REVIEW_JSON_SCHEMA)
+    )
 except Exception:
     _RATING_REVIEW_GRAMMAR = None
+
+
+class VLLMShim:
+    """
+    Drop-in replacement for llama_cpp.Llama() when the eval runs against a
+    vLLM OpenAI-compatible server (see modal_vllm_eval.py). Same callable
+    signature as the underlying Llama instance, so neither llm_score() nor
+    synthesize_persona() need to change.
+
+    Note on parity vs llama-cpp:
+      - vLLM serves Qwen2.5-3B at fp16/bf16, not Q4_K_M, so logits differ at
+        the bit level; at greedy decoding (temperature=0) most tokens still
+        match but ties may break differently. Engine difference must be
+        disclosed in the paper.
+      - `grammar=<LlamaGrammar>` is treated as a sentinel: if any grammar is
+        passed, we apply the rating+review JSON schema via guided_json.
+      - `repeat_penalty` -> vLLM's `repetition_penalty` (via extra_body)
+      - `seed` is passed through (only matters when temperature > 0)
+    """
+
+    def __init__(self, base_url):
+        from openai import OpenAI
+        self.client = OpenAI(api_key="sk-no-key-needed", base_url=base_url)
+        try:
+            self.model_id = self.client.models.list().data[0].id
+        except Exception as e:
+            raise RuntimeError(
+                f"VLLMShim could not list models from {base_url}: {e}"
+            )
+
+    def __call__(self, prompt, max_tokens=256, temperature=0.0, top_p=1.0,
+                 repeat_penalty=1.0, seed=None, stop=None, grammar=None,
+                 **kwargs):
+        extra = {}
+        if abs(repeat_penalty - 1.0) > 1e-6:
+            extra["repetition_penalty"] = repeat_penalty
+        if seed is not None:
+            extra["seed"] = seed
+        if grammar is not None:
+            extra["guided_json"] = _RATING_REVIEW_JSON_SCHEMA
+
+        r = self.client.completions.create(
+            model=self.model_id,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            stop=stop or [],
+            extra_body=extra if extra else None,
+        )
+        return {"choices": [{"text": r.choices[0].text}]}
 
 
 # SYNC: this template is identical to the prompt in agent.py -> simulate_review().
@@ -1145,6 +1203,11 @@ def main():
     ap.add_argument("--pop-distractors", action="store_true",
                     help="with --candidate-pool, draw distractors popularity-weighted "
                          "(harder, matches WWW'25) instead of uniformly at random")
+    ap.add_argument("--vllm-url", type=str, default=None,
+                    help="If set, route LLM calls through a vLLM OpenAI-compatible "
+                         "server at this URL (e.g. http://localhost:8000/v1) instead "
+                         "of loading llama-cpp locally. Used by modal_vllm_eval.py "
+                         "for batched-throughput inference.")
     args = ap.parse_args()
 
     global _persona_fn
@@ -1169,11 +1232,15 @@ def main():
 
     llm = None
     if not args.no_llm:
-        from agent import NaijaBuddyAgent
-        agent = NaijaBuddyAgent()
-        llm = agent.llm
-        if llm is None:
-            print("WARNING: LLM unavailable - falling back to --no-llm mode.")
+        if args.vllm_url:
+            print(f"Routing LLM calls through vLLM server at {args.vllm_url}")
+            llm = VLLMShim(args.vllm_url)
+        else:
+            from agent import NaijaBuddyAgent
+            agent = NaijaBuddyAgent()
+            llm = agent.llm
+            if llm is None:
+                print("WARNING: LLM unavailable - falling back to --no-llm mode.")
 
     cache = load_cache(enabled=not args.no_cache)
 
