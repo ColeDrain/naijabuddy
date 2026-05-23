@@ -90,7 +90,7 @@ image = (
 )
 
 
-@app.function(image=image, gpu="a10g", timeout=36000,
+@app.function(image=image, gpu="a10g", timeout=86400,
               volumes={"/app/eval_artifacts": cache_volume})
 def run_eval_sweep(sample: int, persona_mode: str, seed: int,
                    bertscore: bool, cold_start: bool, cold_sample: int):
