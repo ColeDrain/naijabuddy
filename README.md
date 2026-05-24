@@ -6,7 +6,7 @@ colorTo: yellow
 sdk: docker
 app_port: 8000
 pinned: false
-short_description: Offline-first agentic recommender for the Nigerian market
+short_description: Offline-capable agentic recommender for the Nigerian market
 hardware: cpu-upgrade
 suggested_hardware: cpu-upgrade
 ---
