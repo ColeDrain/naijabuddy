@@ -26,6 +26,24 @@ The Task A and Task B papers share §1 (intro), §2 (architecture), §3 (cultura
 
 The Dockerfile downloads the BGE-small embedding model, ingests the bundled dense datasets and seeds the database **at build time**, so the runtime image starts in seconds. LLM inference is configurable: the agent reads `VLLM_URL` at startup and routes generations through a vLLM endpoint when set, falling back to mock responses otherwise (the deployed HF Space runs in this mode against `modal_vllm_serve.py`). For a fully offline-mode runtime, see [§ Offline Mode](#-offline-mode-no-cloud-llm) below — that mode pulls Qwen2.5-3B-Q4_K_M GGUF (~2.2 GB) into the image and serves inference in-process via llama-cpp-python.
 
+### 0. Clone with Git LFS
+
+> ⚠️ **Required**. This repo tracks the dense-data CSVs (`data/*_dense.csv` ~500 MB), the precomputed item embeddings (`data/item_embeddings.npz` ~125 MB), the compiled solution PDFs (`papers_pdf/*.pdf`), and the rendered architecture diagram (`assets/diagrams/*.png`) via **Git LFS**. Without LFS, `git clone` returns 50-byte pointer stubs in place of those files and the Docker build fails silently at the data-enricher step (and the PDFs are unreadable on GitHub's web viewer).
+
+```bash
+# One-time setup on your machine (skip if already installed)
+git lfs install
+
+# Clone the repo — LFS hooks pull the real binaries automatically
+git clone https://github.com/ColeDrain/naijabuddy.git
+cd naijabuddy
+
+# Sanity check — these should each be 100s of MB, not 50 bytes
+ls -lh data/*_dense.csv data/item_embeddings.npz
+```
+
+If you've already cloned without LFS and want to fix it in place: `git lfs install && git lfs pull`.
+
 ### 1. Build the image
 An internet connection is required *only* during the build, to fetch packages and the embedding model.
 ```bash
