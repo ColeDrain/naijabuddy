@@ -226,7 +226,8 @@ Return ONLY the 2-sentence persona. No markdown backticks, JSON, or extra conver
         synthesized = user["persona"]
         if self.llm:
             try:
-                response = self.llm(prompt, max_tokens=192, temperature=0.3)
+                response = self.llm(prompt, max_tokens=192, temperature=0.3,
+                                    stop=["<|im_end|>", "<|endoftext|>"])
                 synthesized = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"  [Lazy Synthesis] LLM inference failed: {e}")
@@ -316,7 +317,8 @@ Return ONLY a valid JSON object. Do not include any markdown backticks or extra 
         if self.llm:
             try:
                 # Low temperature for deterministic, structured output conforming to constraints
-                response = self.llm(prompt, max_tokens=256, temperature=0.2)
+                response = self.llm(prompt, max_tokens=256, temperature=0.2,
+                                    stop=["<|im_end|>", "<|endoftext|>"])
                 raw_output = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"Llama-cpp inference error: {e}. Falling back to mock...")
@@ -443,7 +445,8 @@ Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra te
         t3 = time.time()
         if self.llm:
             try:
-                response = self.llm(prompt, max_tokens=1024, temperature=0.1)
+                response = self.llm(prompt, max_tokens=1024, temperature=0.1,
+                                    stop=["<|im_end|>", "<|endoftext|>"])
                 raw_output = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"Llama-cpp inference error: {e}. Falling back to mock reranker...")
@@ -568,7 +571,8 @@ Return ONLY a valid JSON object, no markdown backticks or extra text.
         raw_output = ""
         if self.llm:
             try:
-                response = self.llm(prompt, max_tokens=256, temperature=0.2)
+                response = self.llm(prompt, max_tokens=256, temperature=0.2,
+                                    stop=["<|im_end|>", "<|endoftext|>"])
                 raw_output = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"Llama-cpp inference error (adhoc Task A): {e}")
@@ -668,7 +672,8 @@ Return ONLY a valid JSON array of exactly 5 objects, no markdown or extra text.
         raw_output = ""
         if self.llm:
             try:
-                response = self.llm(prompt, max_tokens=1024, temperature=0.1)
+                response = self.llm(prompt, max_tokens=1024, temperature=0.1,
+                                    stop=["<|im_end|>", "<|endoftext|>"])
                 raw_output = response["choices"][0]["text"].strip()
             except Exception as e:
                 print(f"Llama-cpp inference error (adhoc Task B): {e}")
