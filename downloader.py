@@ -48,12 +48,14 @@ def download_models():
     print("MiniLM embedding model successfully cached!")
     
     # 4. Download local GGUF LLM Model
-    # We use Qwen2.5-3B-Instruct-GGUF (Q4_K_M) which is incredibly fast on M1 Mac and fits inside ~2.2GB.
+    # Retained for fallback: when VLLM_URL env var is not set, agent.py loads
+    # the Q4_K_M GGUF via llama-cpp-python. Used by local dev + by Modal
+    # eval-harness runs that route through the same agent code.
     print("\n--- 2. Caching Local LLM GGUF: Qwen2.5-3B-Instruct (Q4_K_M) ---")
     repo_id = "Qwen/Qwen2.5-3B-Instruct-GGUF"
     filename = "qwen2.5-3b-instruct-q4_k_m.gguf"
     dest_path = os.path.join(MODELS_DIR, filename)
-    
+
     if os.path.exists(dest_path):
         print(f"GGUF Model file already exists at: {dest_path}")
     else:
@@ -71,7 +73,36 @@ def download_models():
             print(f"Error downloading model: {e}")
             print("Please ensure you have an active internet connection for this first-time model caching.")
             sys.exit(1)
-            
+
+    # 5. Download Qwen2.5-3B-Instruct HF safetensors weights — the format vLLM
+    # consumes. ~6 GB. Used by the deployed Space when VLLM_URL is set, and
+    # by modal_vllm_eval.py for the paper's multi-seed canonical evaluation.
+    # GGUF and safetensors are both kept on disk so the agent can switch
+    # engines based on VLLM_URL without re-downloading anything.
+    print("\n--- 3. Caching Local LLM HF safetensors: Qwen/Qwen2.5-3B-Instruct ---")
+    hf_repo = "Qwen/Qwen2.5-3B-Instruct"
+    hf_dest = os.path.join(MODELS_DIR, "qwen2.5-3b-hf")
+
+    if os.path.exists(os.path.join(hf_dest, "config.json")):
+        print(f"HF safetensors already cached at: {hf_dest}")
+    else:
+        try:
+            # Use hf_transfer for faster parallel chunked downloads (set
+            # before importing snapshot_download so it picks it up).
+            os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+            from huggingface_hub import snapshot_download
+            print(f"Downloading {hf_repo} safetensors from Hugging Face hub "
+                  f"(~6 GB)...")
+            snapshot_download(
+                repo_id=hf_repo,
+                local_dir=hf_dest,
+                allow_patterns=["*.safetensors", "*.json", "tokenizer*", "*.txt"],
+            )
+            print(f"HF safetensors successfully saved to: {hf_dest}")
+        except Exception as e:
+            print(f"WARNING: HF safetensors download failed (non-fatal — agent "
+                  f"will fall back to llama-cpp + GGUF): {e}")
+
     print("\n" + "=" * 60)
     print("ALL MODELS PRE-CACHED FOR 100% OFFLINE ISOLATION!")
     print("=" * 60)
