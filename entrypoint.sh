@@ -52,6 +52,14 @@ echo "[entrypoint] launching vLLM..."
 # (~30 MB) and the FastAPI process; A10G has 24 GB so we use ~19 GB for vLLM.
 # --max-model-len 4096 matches the prompt sizes agent.py actually sends
 # (much smaller than Qwen2.5's 32K trained ctx).
+#
+# VLLM_USE_FLASHINFER_SAMPLER=0 forces vLLM's native PyTorch top-k/top-p
+# sampler. FlashInfer's sampler kernel is JIT-compiled at first use via
+# nvcc, which the cuda-runtime base image does NOT ship (only cuda-devel
+# does). Without this env var, vLLM crashes mid-profile_run with
+# "nvcc: not found". The native sampler has near-identical throughput
+# for our workload (greedy, temperature=0).
+export VLLM_USE_FLASHINFER_SAMPLER=0
 python -m vllm.entrypoints.openai.api_server \
     --model "${VLLM_MODEL_DIR}" \
     --served-model-name qwen2.5-3b \
