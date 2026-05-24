@@ -58,17 +58,10 @@ COPY generate_personas.py /app/generate_personas.py
 COPY local_data_prep.py /app/local_data_prep.py
 COPY data /app/data
 
-# Regenerate the dense Yelp / Goodreads / Amazon CSVs at build time.
-# Build-regime caps (smaller than the eval-regime defaults of 2,000 users /
-# 1.5M raw rows) keep peak RAM under ~2 GB so the HF Spaces build
-# container doesn't OOM-kill the streaming step. The live deployed agent
-# only loads 100 users per domain into SQLite anyway (see
-# fetch_real_data.fetch_*_data(limit_users=100)), so the slimmer CSVs
-# cost nothing at the Space.
-ENV NAIJABUDDY_LIMIT_USERS=200 \
-    NAIJABUDDY_RAW_LIMIT=200000 \
-    NAIJABUDDY_AMZ_META_LIMIT=200000
-RUN python local_data_prep.py
+# data/*_dense.csv are tracked via Git LFS (see .gitattributes) and
+# arrive in /app/data/ directly via the COPY above — no streaming or
+# regeneration needed at build time. local_data_prep.py stays in the
+# image for offline-reproduction use; it just isn't invoked here.
 
 # Pre-cache models. The local models/ directory is copied straight into the
 # image, so a machine that already holds the weights skips the ~2.2 GB

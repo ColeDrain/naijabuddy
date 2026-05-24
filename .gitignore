@@ -54,9 +54,10 @@ eval_artifacts/
 # are pulled by `hf download McAuley-Lab/Amazon-Reviews-2023 ...`. Committing
 # them adds ~1.6 GB to git history forever and the docs already declare them
 # regenerable (see numbers_integrity.md).
-data/yelp_dense.csv
-data/goodreads_dense.csv
-data/amazon_dense.csv
+# data/*_dense.csv are now tracked via Git LFS (see .gitattributes), not
+# ignored. Removed the prior ignore lines so the HF Spaces build can
+# COPY data /app/data and find the CSVs directly without regenerating
+# at build time (which OOM'd HF's build container).
 data/amazon_crossdomain/
 data/item_embeddings.npz
 
