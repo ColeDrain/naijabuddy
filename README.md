@@ -7,8 +7,8 @@ sdk: docker
 app_port: 8000
 pinned: false
 short_description: Offline-first agentic recommender for the Nigerian market
-hardware: t4-small
-suggested_hardware: t4-small
+hardware: a10g-small
+suggested_hardware: a10g-small
 sleep_time: 300
 ---
 
