@@ -1,11 +1,12 @@
 ---
 title: NaijaBuddy
-emoji: 🇳🇬
+emoji: 🤖
 colorFrom: green
 colorTo: yellow
 sdk: docker
 app_port: 8000
-short_description: Offline-first Nigerian agentic recommender (Qwen2.5-3B local)
+pinned: false
+short_description: Offline-first agentic recommender for the Nigerian market
 hardware: t4-small
 suggested_hardware: t4-small
 sleep_time: 300
