@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# build_pdfs.sh — render the three solution papers (Markdown -> PDF).
+#
+# Output:
+#   papers_pdf/solution_paper.pdf         (full unified reference, ~17 pp)
+#   papers_pdf/solution_paper_task_a.pdf  (User Modeling submission,    ~14 pp)
+#   papers_pdf/solution_paper_task_b.pdf  (Recommendation submission,   ~10 pp)
+#
+# Pipeline:
+#   1. Extract title / subtitle / author / date / abstract from each
+#      Markdown file's front matter (the H1/H3/Authors/Date/Abstract
+#      structure used by the three papers).
+#   2. Emit a pandoc-ready Markdown with YAML metadata block + body.
+#   3. Run pandoc through a custom NeurIPS / arXiv-style LaTeX template
+#      (assets/arxiv_template.tex) with pdflatex.
+#
+# Dependencies (verified once at startup):
+#   - BasicTeX or TeX Live including: mathptmx, helvet, courier, microtype,
+#     enumitem, siunitx, titlesec, cleveref, booktabs, caption, hyperref.
+#     Install on macOS via: brew install --cask basictex (interactive)
+#     followed by: sudo /Library/TeX/texbin/tlmgr install \
+#       collection-fontsrecommended collection-latexrecommended enumitem \
+#       siunitx titlesec cleveref
+#   - pandoc 3.x: brew install pandoc
+#   - python3 (for the metadata-extraction helper; uses only stdlib)
+
+set -euo pipefail
+
+# Resolve repo root regardless of where the script is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+# Make sure BasicTeX's binaries are reachable even when run from contexts
+# (e.g. cron, CI) that haven't loaded the macOS path helper.
+export PATH="/Library/TeX/texbin:$PATH"
+
+TEMPLATE="$REPO_ROOT/assets/arxiv_template.tex"
+OUTDIR="$REPO_ROOT/papers_pdf"
+mkdir -p "$OUTDIR"
+
+# --- Step 1: extract metadata from each Markdown, emit pandoc-ready version
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+python3 - "$WORKDIR" <<'PY'
+import re, sys, pathlib
+workdir = sys.argv[1]
+for src in ["solution_paper.md", "solution_paper_task_a.md", "solution_paper_task_b.md"]:
+    text = pathlib.Path(src).read_text()
+    # The flag emoji has no font glyph in our BasicTeX install — substitute.
+    text = text.replace("\U0001f1f3\U0001f1ec", "(Nigerian)")
+    lines = text.splitlines()
+    title = subtitle = author = date = ""
+    body_idx = 0
+    for i, l in enumerate(lines):
+        if l.startswith("# "):
+            title = l[2:].strip()
+            body_idx = i + 1
+            break
+    for j in range(body_idx, min(body_idx + 5, len(lines))):
+        if lines[j].startswith("### "):
+            subtitle = lines[j][4:].strip()
+            body_idx = j + 1
+            break
+    last = body_idx
+    for j in range(body_idx, min(body_idx + 12, len(lines))):
+        if lines[j].startswith("**Authors**:"):
+            author = lines[j].replace("**Authors**:", "").strip()
+        elif lines[j].startswith("**Affiliation**:"):
+            author += f" — {lines[j].replace('**Affiliation**:', '').strip()}"
+        elif lines[j].startswith("**Date**:"):
+            date = lines[j].replace("**Date**:", "").strip()
+            last = j + 1
+    body_idx = max(body_idx, last)
+    body = "\n".join(lines[body_idx:])
+    m = re.search(r'(?m)^## Abstract\s*\n+(.*?)(?=\n## |\n---\n|\Z)', body, re.DOTALL)
+    abstract = m.group(1).strip().replace("\n", " ") if m else ""
+    if m:
+        body = body[:m.start()] + body[m.end():]
+    body = re.sub(r'^(\s*\n|---\n)+', '', body)
+    yaml = ["---", f'title: "{title}"']
+    if subtitle:  yaml.append(f'subtitle: "{subtitle}"')
+    if author:    yaml.append(f'author: "{author}"')
+    if date:      yaml.append(f'date: "{date}"')
+    if abstract:
+        ab = abstract.replace('"', '\\"')
+        yaml.append(f'abstract: "{ab}"')
+    yaml += ["---", ""]
+    pathlib.Path(f"{workdir}/{src}").write_text("\n".join(yaml) + body)
+    print(f"  prepared {src} ({len(body)} body chars, abstract={len(abstract)}ch)")
+PY
+
+# --- Step 2: compile each via pandoc + pdflatex through the arxiv template
+for tag in solution_paper solution_paper_task_a solution_paper_task_b; do
+    out="$OUTDIR/$tag.pdf"
+    rm -f "$out"
+    if pandoc "$WORKDIR/$tag.md" \
+        -o "$out" \
+        --pdf-engine=pdflatex \
+        --template="$TEMPLATE" \
+        --metadata secnumdepth=-1 \
+        > /dev/null 2>&1; then
+        size=$(stat -f%z "$out" 2>/dev/null || stat -c%s "$out")
+        pages=$(pdfinfo "$out" 2>/dev/null | awk '/^Pages/ {print $2}')
+        echo "  built $tag.pdf — ${size} B, ${pages} pages"
+    else
+        echo "  FAILED to build $tag.pdf — re-run with the pandoc command directly to see errors:"
+        echo "  pandoc $WORKDIR/$tag.md -o $out --pdf-engine=pdflatex --template=$TEMPLATE --metadata secnumdepth=-1"
+        exit 1
+    fi
+done
+echo "All papers rendered to $OUTDIR/"

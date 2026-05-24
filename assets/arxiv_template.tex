@@ -1,0 +1,174 @@
+% Pandoc custom template — single-column NeurIPS / arXiv-style layout.
+% Modeled after the layout convention in articles/2503.05493v2.pdf:
+% centered bold title with horizontal rules, centered author block, an
+% "Abstract" heading centered above an indented abstract body, single
+% spacing, and standard section numbering.
+
+\documentclass[$if(fontsize)$$fontsize$$else$11pt$endif$,letterpaper]{article}
+
+% Section/TOC depth — must be set BEFORE pandoc's body-block executes
+% because pandoc emits $secnumdepth$ verbatim into a \setcounter call,
+% and a missing value renders as the literal string "none" which crashes.
+%
+% secnumdepth=-1 disables LaTeX-generated section numbers. The markdown
+% sources already author their own ("## 1. Introduction", "## 4.2 Rating
+% Prediction"), and letting LaTeX number on top produces doubled prefixes
+% like "0.1 1. Introduction". The numbering authored in the source is the
+% one that matches the cross-references in §X.Y citations throughout the
+% paper, so we keep the source numbers and silence LaTeX.
+\setcounter{secnumdepth}{-1}
+\setcounter{tocdepth}{2}
+
+% ----- Encoding -------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
+
+% ----- Typography (Times + microtype = "looks like a real paper") ----------
+\usepackage{mathptmx}                 % Times for text + math
+\usepackage[scaled=0.92]{helvet}      % Helvetica for sans-serif (sparingly)
+\usepackage{courier}
+\usepackage{microtype}                % Character protrusion + font expansion
+
+% ----- Math -----------------------------------------------------------------
+\usepackage{amsmath,amssymb,mathtools}
+
+% ----- Layout / page geometry ----------------------------------------------
+% NeurIPS-style: 1in margins, single column, modest line height.
+\usepackage[letterpaper,margin=1in]{geometry}
+\linespread{1.05}                     % subtle breathing room, not 1.5
+
+% ----- Sectioning ----------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.4ex plus 0.3ex minus 0.2ex}{0.7ex plus 0.2ex}
+\titlespacing*{\subsection}{0pt}{1.1ex plus 0.3ex minus 0.2ex}{0.5ex plus 0.2ex}
+
+% ----- Lists ---------------------------------------------------------------
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=2em}
+
+% ----- Tables --------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{tabularx}
+
+% ----- Floats & captions ---------------------------------------------------
+\usepackage{float}
+\usepackage[font=small,labelfont=bf,format=hang,justification=centering]{caption}
+
+% ----- Hyperlinks ----------------------------------------------------------
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{url}
+\urlstyle{same}
+
+% ----- Page style ----------------------------------------------------------
+\pagestyle{plain}
+\setlength{\parskip}{0.5\baselineskip}
+\setlength{\parindent}{0pt}
+
+% ----- Unicode character mappings ------------------------------------------
+% Greek letters and math symbols used inline outside math mode.
+\DeclareUnicodeCharacter{03B1}{\ensuremath{\alpha}}
+\DeclareUnicodeCharacter{03B2}{\ensuremath{\beta}}
+\DeclareUnicodeCharacter{03B3}{\ensuremath{\gamma}}
+\DeclareUnicodeCharacter{03BC}{\ensuremath{\mu}}
+\DeclareUnicodeCharacter{03C3}{\ensuremath{\sigma}}
+\DeclareUnicodeCharacter{2192}{\ensuremath{\rightarrow}}
+\DeclareUnicodeCharacter{2264}{\ensuremath{\le}}
+\DeclareUnicodeCharacter{2265}{\ensuremath{\ge}}
+\DeclareUnicodeCharacter{2248}{\ensuremath{\approx}}
+\DeclareUnicodeCharacter{2208}{\ensuremath{\in}}
+\DeclareUnicodeCharacter{00D7}{\ensuremath{\times}}
+\DeclareUnicodeCharacter{2605}{\textasteriskcentered}
+\DeclareUnicodeCharacter{00A7}{\S}
+\DeclareUnicodeCharacter{00B1}{\ensuremath{\pm}}
+\DeclareUnicodeCharacter{00B7}{\textperiodcentered}
+\DeclareUnicodeCharacter{2013}{--}
+\DeclareUnicodeCharacter{2014}{---}
+\DeclareUnicodeCharacter{2212}{\ensuremath{-}}
+% Box-drawing for architecture diagram (code-fenced; renders as ASCII).
+\DeclareUnicodeCharacter{2500}{-}
+\DeclareUnicodeCharacter{2502}{|}
+\DeclareUnicodeCharacter{251C}{+}
+\DeclareUnicodeCharacter{2514}{+}
+\DeclareUnicodeCharacter{2510}{+}
+\DeclareUnicodeCharacter{2518}{+}
+\DeclareUnicodeCharacter{250C}{+}
+\DeclareUnicodeCharacter{25BC}{v}
+
+% Pandoc compatibility (its default template defines these — we need
+% them too when using a custom template, otherwise tightlist etc. fail)
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\real}[1]{#1}
+\providecommand{\toprule}{\hline}
+\providecommand{\midrule}{\hline}
+\providecommand{\bottomrule}{\hline}
+
+% Pandoc 3.x emits \refstepcounter{none} inside longtable cells when no
+% caption is supplied — without a defined "none" counter this triggers
+% a hyperref crash. Defining it harmlessly satisfies the reference.
+\newcounter{none}
+\providecommand{\thenone}{}
+\providecommand{\theHnone}{none.\arabic{none}}
+
+% Pandoc highlighting macros (in case any code blocks slip through with syntax)
+$if(highlighting-macros)$
+$highlighting-macros$
+$endif$
+
+% Pandoc may also emit \pandocbounded for images; provide a no-op.
+\providecommand{\pandocbounded}[1]{#1}
+
+%% ===========================================================================
+%% TITLE BLOCK — NeurIPS / arXiv style
+%% ===========================================================================
+% Title is set in a centered box with horizontal rules above and below
+% (the iconic NeurIPS title-page look).
+
+\begin{document}
+
+% --- Title block ---
+{\centering
+\rule{\textwidth}{0.4pt}\\[0.3em]
+{\Large\bfseries $title$\par}%
+$if(subtitle)$
+\vskip 0.2em
+{\large $subtitle$\par}%
+$endif$
+\vskip 0.3em
+\rule{\textwidth}{0.4pt}\\[1.5em]
+
+% Authors — pandoc emits as a plain paragraph; we just center it.
+$if(author)$
+{\normalsize
+$for(author)$$author$$sep$ \quad $endfor$
+\par}
+\vskip 0.3em
+$endif$
+
+$if(date)${\small\itshape $date$\par}\vskip 1em$endif$
+\par}
+
+% --- Abstract block ---
+% Centered "Abstract" heading, indented body — matches the convention
+% used in NeurIPS/arXiv preprints. Pandoc emits \begin{abstract}...
+% only when YAML metadata sets it, so we manually wrap with the user's
+% blockquote-style "> This paper covers Task X..." if present.
+
+$if(abstract)$
+\begin{quote}
+\begin{center}{\bfseries Abstract}\end{center}
+\vskip 0.3em
+\noindent $abstract$
+\end{quote}
+\vskip 1em
+$endif$
+
+% --- Body content ---
+$body$
+
+\end{document}

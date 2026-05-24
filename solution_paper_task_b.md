@@ -5,7 +5,7 @@
 **Affiliation**: DSN x BCT Data & AI Summit Hackathon 3.0
 **Date**: May 2026
 
-> This paper covers **Task B** of the DSN × BCT Hackathon 3.0 brief — Recommendation: given a user persona and a target domain, return a ranked list of items with persona-grounded justifications. The same agent and codebase also serve **Task A** (User Modeling); that task is described in [`solution_paper_task_a.md`](solution_paper_task_a.md), and shares the architecture (§2), calibration layer (§2.3), and evaluation harness reported here. We submit one repo and two task-focused papers per the form's structure; the codebase is unified per the brief's "two tasks, one ambition" framing.
+> This paper covers **Task B** of the DSN × BCT Hackathon 3.0 brief — Recommendation: given a user persona and a target domain, return a ranked list of items with persona-grounded justifications. The same agent and codebase also serve **Task A** (User Modeling), described in the companion Task A paper, which shares the architecture (§2), calibration layer (§2.3), and evaluation harness reported here. We submit one repo and two task-focused papers per the form's structure; the codebase is unified per the brief's "two tasks, one ambition" framing.
 
 ---
 
@@ -42,7 +42,7 @@ User persona / query
   ├─ Layer 2 · Rerank      Qwen2.5-3B-Instruct (llama-cpp GGUF or vLLM
   │                        safetensors — see §2.2.1): in-context persona
   │                        modelling, pairwise sort, justification generation
-  ├─ Layer 3 · Calibrate   (Task A path — see solution_paper_task_a.md;
+  ├─ Layer 3 · Calibrate   (Task A path — see the companion Task A paper;
   │                        Task B uses the cluster-mean lookup for cold-start
   │                        persona-to-neighbour mapping)
   └─ Layer 4 · Critic      deterministic rule filter — constraint-violating
@@ -83,7 +83,7 @@ The top 10 candidates retrieved by Stage 1 are represented as a serialized JSON 
 A separate `naija_mode` flag toggles a Pidgin-English style overlay for the justifications; the ranking order is unaffected by style.
 
 ### 2.3 Layer 3 (Calibration — used here for persona cluster-mean lookup)
-Task B uses Layer 1's vector index for a **cluster-mean neighbour lookup**: when a persona has no rating history, the index retrieves the top K = 5 nearest known users so the rerank prompt can be conditioned on similar-user behaviour patterns. The full rating-calibration math is described in [`solution_paper_task_a.md`](solution_paper_task_a.md) §2.3 and §4 — Task B's interaction with the calibration layer is narrow.
+Task B uses Layer 1's vector index for a **cluster-mean neighbour lookup**: when a persona has no rating history, the index retrieves the top K = 5 nearest known users so the rerank prompt can be conditioned on similar-user behaviour patterns. The full rating-calibration math is described in the companion Task A paper (§2.3 and §4) — Task B's interaction with the calibration layer is narrow.
 
 ### 2.4 Layer 4: Collaborative Critic Layer (Deterministic Verification)
 Even advanced LLMs sometimes hallucinate or ignore negative constraints in prompts (e.g., recommending a spicy beef dish to a strict vegetarian). Our Critic Layer programmatically inspects the ranked list and applies strict rule-based filters:
@@ -162,7 +162,7 @@ NaijaBuddy can model a user two ways: a deterministic **template** persona (cate
 At n = 2,000 persona synthesis makes **no meaningful difference to retrieval**: hybrid HitRate@10 moves by at most 0.005 and not consistently in sign. The reason is structural — at a realistic catalogue size (10K–57K items) content/dense retrieval has collapsed toward zero (§4.2), and the retrieval signal that survives, item-item CF, is computed from co-occurrence and is *persona-independent by construction*. (An earlier n = 350 run, with catalogues 10–60× smaller where dense retrieval still functioned, did show synthesis lifting Yelp recall; that effect does not survive the realistic catalogue size.) The honest reading: on the retrieval metric, template and synthesised personas are **equivalent** — persona synthesis is a UX choice that carries the conversational human-facing demo and the justification text, not a retrieval lever.
 
 ### 4.4 Cold-Start in Retrieval
-Cold-start retrieval is genuinely weak: dense HitRate@10 ≤ 0.005 at k ≤ 3 across all seeds and domains. A one-interaction persona is too thin a query, and a cold user's recommendations must lean on the popularity and cluster-mean fallbacks. This is a known limit of content-only retrieval and is the symmetric counterpart of the Task A finding (`solution_paper_task_a.md` §4.3) that item-bias rescues cold-start *rating* prediction — for *retrieval* there is no analogous statistical anchor that closes the gap. Future work would explore cross-user neighbourhood transfer (recommend what the K-nearest known users liked) and popularity-weighted backfill of the candidate list.
+Cold-start retrieval is genuinely weak: dense HitRate@10 ≤ 0.005 at k ≤ 3 across all seeds and domains. A one-interaction persona is too thin a query, and a cold user's recommendations must lean on the popularity and cluster-mean fallbacks. This is a known limit of content-only retrieval and is the symmetric counterpart of the Task A finding (companion paper, §4.3) that item-bias rescues cold-start *rating* prediction — for *retrieval* there is no analogous statistical anchor that closes the gap. Future work would explore cross-user neighbourhood transfer (recommend what the K-nearest known users liked) and popularity-weighted backfill of the candidate list.
 
 ### 4.5 Honest Summary (Task B)
 
@@ -176,7 +176,7 @@ NaijaBuddy's Task B measured strengths are **hybrid retrieval** that beats the p
 
 **Hybrid retrieval and well-tuned baselines.** Dacrema et al. [2019] showed that many neural recommenders fail to beat well-tuned simple baselines once evaluation is done carefully — so we report the popularity baseline, ALS, and pure item-item CF beside every hybrid result. Our §4.2 retrieval table is in part a direct reproduction of that finding on three datasets at multi-cutoff. We deploy item-item CF as the Stage-1 signal precisely because of how it performs against ALS at the cutoffs that matter for top-list user-facing recommendation. Krichene and Rendle [KDD 2020] separately argue that sampled-metric protocols are not interchangeable; we report on the full candidate pool and include a sampled-protocol cross-reference for placement.
 
-**Cold-start in retrieval.** A long line of classical remedies — content-based features, item-popularity backfill, cross-domain transfer, and meta-learning estimators such as MeLU [Lee et al., 2019] — address the same underlying problem. Our cold-start retrieval result (§4.4) is the symmetric counterpart of Task A's cold-start *rating* finding (`solution_paper_task_a.md` §4.3): item-bias rescues rating prediction, but for retrieval there is no analogous closed-form anchor.
+**Cold-start in retrieval.** A long line of classical remedies — content-based features, item-popularity backfill, cross-domain transfer, and meta-learning estimators such as MeLU [Lee et al., 2019] — address the same underlying problem. Our cold-start retrieval result (§4.4) is the symmetric counterpart of Task A's cold-start *rating* finding (companion paper, §4.3): item-bias rescues rating prediction, but for retrieval there is no analogous closed-form anchor.
 
 **Critic and verification layers.** Recent work on LLM agents pairs the LLM with deterministic verification or critic layers (Andre et al., 2025) to enforce hard constraints that the LLM may otherwise hallucinate over. Our Critic Layer is a minimal instance of this idea — rule-based, keyword-driven, and described as such; the natural next step is a learned semantic critic.
 
@@ -198,4 +198,4 @@ With more development time and computing resources, we propose the following sca
 ## 7. Conclusion (Task B)
 In this paper, we presented **NaijaBuddy** for **Task B: Recommendation** — given a Nigerian persona and a target domain, the agent returns a ranked list of items with persona-grounded justifications. By structuring our system around a dual-stage "Filter-then-Rerank" workflow — hybrid dense + item-item CF Stage 1, in-context `Qwen2.5-3B-Instruct` Stage 2 (served via interchangeable `llama-cpp-python` or vLLM backends — §2.2.1) — and a deterministic Critic Layer, we deliver retrieval that beats the popularity baseline by 3.4–6× at HR@10 across all three domains. We document the measured limit honestly: pure content/dense retrieval does not beat popularity at realistic catalogue sizes, and persona synthesis is a UX choice, not a retrieval lever — refining a common assumption about LLM-aided recommendation. Enriched with authentic Nigerian personas, NaijaBuddy's Task B path represents a reliable and culturally authentic approach to personalised recommendation on the edge.
 
-The same agent serves **Task A: User Modeling**, described in [`solution_paper_task_a.md`](solution_paper_task_a.md), sharing the architecture, Critic Layer, and evaluation harness reported here.
+The same agent serves **Task A: User Modeling**, described in the companion Task A paper, sharing the architecture, Critic Layer, and evaluation harness reported here.
