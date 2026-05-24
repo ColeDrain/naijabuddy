@@ -46,6 +46,11 @@ class NaijaBuddyAgent:
         """
         self.llm = None
         self.alpha = ALPHA
+        # engine_label is included in /task_a + /task_b responses so the UI's
+        # tag row reflects the engine that actually produced the output.
+        # Defaults to the mock label and is overwritten by whichever load path
+        # succeeds below.
+        self.engine_label = "mock-fallback (LLM not loaded)"
 
         # ---- Path (a): vLLM HTTP shim ---------------------------------------
         vllm_url = os.getenv("VLLM_URL")
@@ -54,6 +59,7 @@ class NaijaBuddyAgent:
                 print(f"Loading vLLM-backed LLM via VLLMShim ({vllm_url})...")
                 from vllm_shim import VLLMShim
                 self.llm = VLLMShim(vllm_url)
+                self.engine_label = "Qwen2.5-3B-Instruct (vLLM, safetensors)"
                 print(f"vLLM endpoint reachable; serving model "
                       f"{self.llm.model_id!r}. Live app and paper-canonical "
                       f"eval now share the same inference engine.")
@@ -83,6 +89,7 @@ class NaijaBuddyAgent:
                             flash_attn=True,
                             verbose=False
                         )
+                        self.engine_label = "Qwen2.5-3B-Instruct (Q4_K_M GGUF, llama.cpp + GPU + FA2)"
                         print("Local GGUF LLM loaded with GPU acceleration and Flash Attention!")
                     except Exception as fa_err:
                         print(f"GPU initialization with Flash Attention failed ({fa_err}). Trying GPU without Flash Attention...")
@@ -93,6 +100,7 @@ class NaijaBuddyAgent:
                             flash_attn=False,
                             verbose=False
                         )
+                        self.engine_label = "Qwen2.5-3B-Instruct (Q4_K_M GGUF, llama.cpp + GPU)"
                         print("Local GGUF LLM loaded with GPU acceleration (no Flash Attention)!")
                 except Exception as gpu_err:
                     print(f"GPU initialization failed ({gpu_err}), falling back to CPU baseline...")
@@ -102,6 +110,7 @@ class NaijaBuddyAgent:
                         n_threads=4,
                         verbose=False
                     )
+                    self.engine_label = "Qwen2.5-3B-Instruct (Q4_K_M GGUF, llama.cpp + CPU)"
                     print("Local GGUF LLM loaded on CPU baseline.")
             except Exception as e:
                 print(f"Warning: Failed to load llama-cpp-python or GGUF: {e}")
@@ -564,11 +573,19 @@ Return ONLY a valid JSON array of exactly 5 objects. Do not include any extra te
         item_desc = (product.get("description") or "").strip()
 
         # Cultural style is the single knob naija_mode turns.
+        # We tried a de-forced variant that dropped all slang exemplars
+        # ("write the way the persona would speak"); the result was worse —
+        # Qwen2.5-3B's Pidgin knowledge is thin enough that without anchor
+        # words the model improvises gibberish or loops on hallucinated
+        # Yoruba grammar. The exemplar list below is a coherence crutch.
+        # "No cap" removed from the list because it's AAVE / US Gen-Z
+        # internet slang, not Nigerian Pidgin — its prior inclusion was a
+        # category error.
         if naija_mode:
             style = ("The reviewer is Nigerian. Write the review in authentic "
                      "Nigerian Pidgin English with natural local slang and "
-                     "cultural references (e.g. 'Abeg', 'Wahala', 'No cap', "
-                     "'Omo', 'sharp sharp'). It must read like a real Nigerian.")
+                     "cultural references (e.g. 'Abeg', 'Wahala', 'Omo', "
+                     "'sharp sharp'). It must read like a real Nigerian.")
         else:
             style = ("Write the review in clear, neutral, standard English. "
                      "Keep the tone natural and conversational; do not use "
@@ -656,7 +673,7 @@ Return ONLY a valid JSON object, no markdown backticks or extra text.
             "raw_rating": round(raw_rating, 2),
             "review": review_text,
             "reasoning": reasoning,
-            "model": "Qwen2.5-3B-Instruct (local GGUF)" if self.llm else "mock-fallback (LLM not loaded)",
+            "model": self.engine_label,
             "naija_mode": bool(naija_mode),
         }
 
@@ -674,6 +691,9 @@ Return ONLY a valid JSON object, no markdown backticks or extra text.
             [{"id": c["id"], "name": c["name"], "category": c["category"],
               "description": c["description"]} for c in candidates], indent=2)
 
+        # See simulate_review_adhoc for the rationale behind keeping the
+        # slang exemplars: dropping them entirely produced gibberish on a
+        # 3B-param Pidgin-shallow model.
         tone = ("Write each explanation in authentic Nigerian Pidgin English "
                 "with natural local slang." if naija_mode else
                 "Write each explanation in clear, neutral standard English.")
