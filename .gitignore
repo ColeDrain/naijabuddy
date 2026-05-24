@@ -58,3 +58,10 @@ data/yelp_dense.csv
 data/goodreads_dense.csv
 data/amazon_dense.csv
 data/amazon_crossdomain/
+data/item_embeddings.npz
+
+# Binary files HF Hub rejects outside of Xet/LFS — keep them out of the
+# tracked tree entirely. (The competition brief PDF is publicly available
+# via the hackathon's website; no need to vendor a copy here.)
+*.pdf
+*.npz
