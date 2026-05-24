@@ -17,9 +17,18 @@ import os
 import pandas as pd
 from datasets import load_dataset
 
-LIMIT_USERS = 2000
-RAW_LIMIT = 1_500_000
-AMZ_META_LIMIT = 1_500_000
+# All three caps are env-overridable so this script can run in either
+# regime: (a) the EVAL regime (LIMIT_USERS=2000, RAW_LIMIT=1.5M — produces
+# the n=2,000 dense datasets the paper cites; needs ~8 GB RAM peak), or
+# (b) the LIVE-SPACE-BUILD regime (LIMIT_USERS=200, RAW_LIMIT=200K — produces
+# a slimmer SQLite for the demo Space; fits in ~2 GB RAM, safe for HF
+# Spaces' build container which OOMs at the eval-regime defaults).
+# The deployed Space's data_enricher.py only consumes the first 100 users
+# of each domain anyway (see fetch_real_data.fetch_*_data(limit_users=100)),
+# so the live demo loses nothing by running in build-regime.
+LIMIT_USERS = int(os.environ.get("NAIJABUDDY_LIMIT_USERS", "2000"))
+RAW_LIMIT = int(os.environ.get("NAIJABUDDY_RAW_LIMIT", "1500000"))
+AMZ_META_LIMIT = int(os.environ.get("NAIJABUDDY_AMZ_META_LIMIT", "1500000"))
 COLS = ["user_id", "item_id", "item_name", "category", "rating", "review_text"]
 
 

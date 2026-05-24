@@ -58,11 +58,16 @@ COPY generate_personas.py /app/generate_personas.py
 COPY local_data_prep.py /app/local_data_prep.py
 COPY data /app/data
 
-# Regenerate the dense Yelp / Goodreads / Amazon CSVs at build time by
-# streaming the source datasets from the Hugging Face Hub. The dense CSVs
-# are not committed (gitignored — ~600 MB combined and regenerable per
-# numbers_integrity.md). Without this step, data_enricher.py below fails
-# with FileNotFoundError on /app/data/*_dense.csv. ~10 min during build.
+# Regenerate the dense Yelp / Goodreads / Amazon CSVs at build time.
+# Build-regime caps (smaller than the eval-regime defaults of 2,000 users /
+# 1.5M raw rows) keep peak RAM under ~2 GB so the HF Spaces build
+# container doesn't OOM-kill the streaming step. The live deployed agent
+# only loads 100 users per domain into SQLite anyway (see
+# fetch_real_data.fetch_*_data(limit_users=100)), so the slimmer CSVs
+# cost nothing at the Space.
+ENV NAIJABUDDY_LIMIT_USERS=200 \
+    NAIJABUDDY_RAW_LIMIT=200000 \
+    NAIJABUDDY_AMZ_META_LIMIT=200000
 RUN python local_data_prep.py
 
 # Pre-cache models. The local models/ directory is copied straight into the
