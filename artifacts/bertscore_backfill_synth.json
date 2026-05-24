@@ -1,0 +1,63 @@
+{
+  "per_seed": {
+    "42": {
+      "Yelp": {
+        "n_pairs": 2000,
+        "bertscore_f1_mean": 0.8383744955062866
+      },
+      "Goodreads": {
+        "n_pairs": 1999,
+        "bertscore_f1_mean": 0.8407366275787354
+      },
+      "Amazon": {
+        "n_pairs": 1998,
+        "bertscore_f1_mean": 0.8464858531951904
+      }
+    },
+    "1": {
+      "Yelp": {
+        "n_pairs": 2000,
+        "bertscore_f1_mean": 0.8380485773086548
+      },
+      "Goodreads": {
+        "n_pairs": 2000,
+        "bertscore_f1_mean": 0.840286910533905
+      },
+      "Amazon": {
+        "n_pairs": 1996,
+        "bertscore_f1_mean": 0.8458445072174072
+      }
+    },
+    "7": {
+      "Yelp": {
+        "n_pairs": 2000,
+        "bertscore_f1_mean": 0.8386282920837402
+      },
+      "Goodreads": {
+        "n_pairs": 1999,
+        "bertscore_f1_mean": 0.8409169316291809
+      },
+      "Amazon": {
+        "n_pairs": 1998,
+        "bertscore_f1_mean": 0.8460381627082825
+      }
+    }
+  },
+  "across_seeds": {
+    "Yelp": {
+      "n_seeds": 3,
+      "mean": 0.8383504549662272,
+      "std": 0.00029060413931644924
+    },
+    "Goodreads": {
+      "n_seeds": 3,
+      "mean": 0.8406468232472738,
+      "std": 0.000324469195125056
+    },
+    "Amazon": {
+      "n_seeds": 3,
+      "mean": 0.8461228410402933,
+      "std": 0.0003289513349095653
+    }
+  }
+}
