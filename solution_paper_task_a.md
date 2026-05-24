@@ -236,7 +236,7 @@ Three findings stand out:
 
 3. **Pure item-bias alone is the worst predictor** (RMSE 1.31, worse even than V0 global mean). The item-bias term carries information *only when combined with a user-side prior* — it is not a baseline, it is a corrector. This refines §4.3: V3's strength is not just "item-bias rescues cold users" but "**any user-side prior plus item-bias beats either alone**", and the held-out movie not needing to be in the user's domain at all is the strongest possible statement of that.
 
-Regenerable with `python cross_domain_dataset.py && python cross_domain_eval.py`. The protocol is purely statistical and runs in seconds on CPU — no LLM, no GPU, no Modal — which makes it the cheapest reproducibility test for the §4.3 thesis we can offer.
+Regenerable via `cross_domain_dataset.py` followed by `cross_domain_eval.py`. The protocol is purely statistical and runs in seconds on CPU (no LLM, no GPU, no Modal), making it the cheapest reproducibility test for the §4.3 thesis we can offer.
 
 ### 4.8 Honest Summary (Task A)
 
