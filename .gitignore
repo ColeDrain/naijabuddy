@@ -54,15 +54,13 @@ eval_artifacts/
 # are pulled by `hf download McAuley-Lab/Amazon-Reviews-2023 ...`. Committing
 # them adds ~1.6 GB to git history forever and the docs already declare them
 # regenerable (see numbers_integrity.md).
-# data/*_dense.csv are now tracked via Git LFS (see .gitattributes), not
-# ignored. Removed the prior ignore lines so the HF Spaces build can
-# COPY data /app/data and find the CSVs directly without regenerating
-# at build time (which OOM'd HF's build container).
+# data/*_dense.csv and data/item_embeddings.npz are now tracked via Git
+# LFS (see .gitattributes), not ignored. This means the HF Spaces build
+# can COPY data /app/data and find them directly — no regeneration at
+# build time (which OOM'd or took 30+ min on HF's CPU-only build env).
 data/amazon_crossdomain/
-data/item_embeddings.npz
 
-# Binary files HF Hub rejects outside of Xet/LFS — keep them out of the
-# tracked tree entirely. (The competition brief PDF is publicly available
-# via the hackathon's website; no need to vendor a copy here.)
+# Binary files HF Hub rejects outside of Xet/LFS — keep PDFs out of the
+# tracked tree. (The competition brief PDF is publicly available via the
+# hackathon's website; no need to vendor a copy here.)
 *.pdf
-*.npz
