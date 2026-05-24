@@ -27,8 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python3
 
-# Install uv for fast dependency resolution
-RUN pip install --no-cache-dir --break-system-packages uv
+# Install uv for fast dependency resolution. Note: ubuntu 22.04's bundled
+# pip (22.0.2) predates the --break-system-packages flag from pip 23.0+,
+# and also predates PEP 668 enforcement, so a plain `pip install` works.
+RUN pip install --no-cache-dir uv
 
 # Install dependencies. vLLM 0.21 brings its own torch (built against CUDA 12.9)
 # as a transitive dep, so we don't pin torch separately. llama-cpp-python is
