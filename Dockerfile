@@ -126,6 +126,8 @@ COPY --chown=user static /app/static
 COPY --chown=user database.py /app/database.py
 COPY --chown=user agent.py /app/agent.py
 COPY --chown=user app.py /app/app.py
+COPY --chown=user vllm_shim.py /app/vllm_shim.py
+COPY --chown=user --chmod=755 entrypoint.sh /app/entrypoint.sh
 
 # Set configuration environment variables
 ENV PORT=8000 \
@@ -133,10 +135,15 @@ ENV PORT=8000 \
     HOME=/home/user \
     HF_HOME=/app/models/hf_home \
     SENTENCE_TRANSFORMERS_HOME=/app/models/sentence_transformers \
-    NAIJABUDDY_ALPHA=0.3
+    NAIJABUDDY_ALPHA=0.3 \
+    HF_HUB_ENABLE_HF_TRANSFER=1
 
 # Expose web server port (matches `app_port: 8000` in the Space README.md)
 EXPOSE 8000
 
-# Run Uvicorn server serving FastAPI on 0.0.0.0 for docker ingress routing
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# entrypoint.sh starts vLLM on 127.0.0.1:8001 in the background, waits
+# for it to become ready, exports VLLM_URL, then execs uvicorn on the
+# user-facing port. If vLLM fails to start in 5 min the script falls
+# back to launching uvicorn alone — agent.py then uses llama-cpp via
+# the existing fallback path.
+CMD ["/app/entrypoint.sh"]
