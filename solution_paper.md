@@ -33,22 +33,7 @@ We introduce **NaijaBuddy**, a unified agentic recommender and review simulator 
 
 NaijaBuddy's backend engine is built in Python using FastAPI, SQLite and NumPy, with the LLM served via either `llama-cpp-python` (offline mode) or an OpenAI-protocol HTTP client pointed at a vLLM endpoint (vLLM mode — see §2.2.1). The architecture consists of four distinct, sequential layers:
 
-```
-User persona / query
-  │
-  ├─ Layer 1 · Recall      BGE-small dense search + item-item CF over the
-  │                        hybrid SQLite catalogue → top-10 candidates
-  ├─ Layer 2 · Rerank      Qwen2.5-3B-Instruct (llama-cpp GGUF or vLLM
-  │                        safetensors — see §2.2.1): in-context persona
-  │                        modelling, pairwise sort, review generation
-  ├─ Layer 3 · Calibrate   blend the LLM rating with the user/item statistical
-  │                        anchor (cluster-mean fallback for cold-start)
-  └─ Layer 4 · Critic      deterministic rule filter — constraint-violating
-                           items pushed to the bottom
-  │
-  ▼
-Final calibrated ratings, reviews & recommendations
-```
+![NaijaBuddy four-layer filter-then-rerank architecture. Layer 1 retrieves candidates from the hybrid SQLite catalogue via BGE-small dense search blended with item-item collaborative filtering. Layer 2 reranks them in-context using Qwen2.5-3B-Instruct (served via either llama-cpp-python on GGUF or vLLM on the safetensors, see §2.2.1). Layer 3 calibrates the LLM rating against user-bias and item-bias statistical anchors. Layer 4 applies a deterministic rule-based critic to demote constraint-violating items. Tasks A (User Modeling) and B (Recommendation) share this pipeline; the source diagram is at `assets/diagrams/architecture.mmd`.](assets/diagrams/architecture.png){ width=55% }
 
 ### 2.1 Layer 1: Hybrid Catalog & Dense Semantic Recall
 To deliver recommendations across multiple domains (Yelp, Amazon, Goodreads), we design a unified SQLite schema. The database is populated with an extensive, highly localized catalog spanning three distinct categories:

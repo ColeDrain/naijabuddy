@@ -1,0 +1,24 @@
+%% NaijaBuddy Architecture Diagram
+%% Four-layer filter-then-rerank pipeline shared by Tasks A and B.
+%% Rendered to PNG/PDF via:
+%%   npx -y @mermaid-js/mermaid-cli -i architecture.mmd -o architecture.png \
+%%       -w 1400 --backgroundColor white
+%% (or scripts/build_pdfs.sh runs this automatically before pandoc).
+flowchart TD
+    classDef inout fill:#fdf5e6,stroke:#8a6d3b,stroke-width:1.4px,color:#222,font-size:13px
+    classDef layer fill:#f4f7fb,stroke:#3a4a6b,stroke-width:1.4px,color:#222,font-size:13px
+    classDef divider fill:#ffffff,stroke:#ffffff,color:#222
+
+    IN["User persona &nbsp;/&nbsp; query"]:::inout
+
+    L1["<b>Layer 1 · Recall</b><br/><i>BGE-small dense search + item-item CF</i><br/>over the hybrid SQLite catalogue<br/>→ top-10 candidates"]:::layer
+
+    L2["<b>Layer 2 · Rerank</b><br/><i>Qwen2.5-3B-Instruct</i><br/>llama-cpp-python GGUF &nbsp;or&nbsp; vLLM safetensors<br/>persona modelling • pairwise sort • generation"]:::layer
+
+    L3["<b>Layer 3 · Calibrate</b><br/>3-term blend: α·LLM + β·μ_user + γ·μ_item<br/><i>vector-cluster-mean fallback for cold-start</i>"]:::layer
+
+    L4["<b>Layer 4 · Critic</b><br/><i>Deterministic rule filter</i><br/>constraint-violating items penalised"]:::layer
+
+    OUT["Calibrated ratings, reviews<br/>&amp; recommendations"]:::inout
+
+    IN --> L1 --> L2 --> L3 --> L4 --> OUT

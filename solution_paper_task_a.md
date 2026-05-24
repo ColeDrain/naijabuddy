@@ -36,24 +36,7 @@ We introduce **NaijaBuddy**, a unified agentic recommender and review simulator 
 
 NaijaBuddy's backend engine is built in Python using FastAPI, SQLite and NumPy, with the LLM served via either `llama-cpp-python` (offline mode) or an OpenAI-protocol HTTP client pointed at a vLLM endpoint (vLLM mode — see §2.2.1). The architecture consists of four distinct, sequential layers; Task A uses Layers 2, 3, and 4 directly, with Layer 1's vector index re-used for the cluster-mean cold-start fallback:
 
-```
-Persona text + target item
-  │
-  ├─ (Layer 1 vector index reused for nearest-user lookup
-  │   when the user has no history — see §2.3 Cluster-Mean fallback)
-  │
-  ├─ Layer 2 · LLM            Qwen2.5-3B-Instruct (llama-cpp GGUF or vLLM
-  │                           safetensors — see §2.2.1): persona-grounded
-  │                           rating + review generation (Task A prompt)
-  ├─ Layer 3 · Calibrate      blend raw LLM rating with user-mean and
-  │                           item-mean statistical anchors; cluster-mean
-  │                           fallback for cold-start personas
-  └─ Layer 4 · Critic         deterministic rule filter — constraint-violating
-                              outputs penalised
-  │
-  ▼
-Calibrated rating + persona-grounded review
-```
+![NaijaBuddy's four-layer pipeline shared by Tasks A and B. **Task A (this paper)** primarily exercises Layers 2 (LLM rating + review generation), 3 (calibration against user-bias and item-bias anchors), and 4 (deterministic critic). Layer 1's vector index is re-used by Task A for the cluster-mean cold-start fallback (§2.3) — the index retrieves the K-nearest known users by persona embedding cosine when the active user has no rating history. The diagram source is at `assets/diagrams/architecture.mmd`.](assets/diagrams/architecture.png){ width=55% }
 
 ### 2.1 Layer 1: Hybrid Catalog & Vector Index (used by Task A for cold-start)
 To deliver recommendations across multiple domains (Yelp, Amazon, Goodreads), we design a unified SQLite schema. The database is populated with an extensive, highly localized catalog spanning three distinct categories:

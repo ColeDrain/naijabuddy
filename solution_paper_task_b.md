@@ -34,23 +34,7 @@ We introduce **NaijaBuddy**, a unified agentic recommender and review simulator 
 
 NaijaBuddy's backend engine is built in Python using FastAPI, SQLite and NumPy, with the LLM served via either `llama-cpp-python` (offline mode) or an OpenAI-protocol HTTP client pointed at a vLLM endpoint (vLLM mode — see §2.2.1). The architecture consists of four distinct, sequential layers; Task B exercises all four:
 
-```
-User persona / query
-  │
-  ├─ Layer 1 · Recall      BGE-small dense search + item-item CF over the
-  │                        hybrid SQLite catalogue → top-10 candidates
-  ├─ Layer 2 · Rerank      Qwen2.5-3B-Instruct (llama-cpp GGUF or vLLM
-  │                        safetensors — see §2.2.1): in-context persona
-  │                        modelling, pairwise sort, justification generation
-  ├─ Layer 3 · Calibrate   (Task A path — see the companion Task A paper;
-  │                        Task B uses the cluster-mean lookup for cold-start
-  │                        persona-to-neighbour mapping)
-  └─ Layer 4 · Critic      deterministic rule filter — constraint-violating
-                           items pushed to the bottom
-  │
-  ▼
-Final ranked recommendations + persona-grounded justifications
-```
+![NaijaBuddy's four-layer pipeline shared by Tasks A and B. **Task B (this paper)** exercises all four: Layer 1 produces a top-10 candidate list via hybrid dense + item-item CF retrieval, Layer 2 reranks them with `Qwen2.5-3B-Instruct` and generates persona-grounded justifications, Layer 3 contributes a cluster-mean neighbour lookup for cold-start personas, and Layer 4 demotes items violating encoded constraint rules. The diagram source is at `assets/diagrams/architecture.mmd`.](assets/diagrams/architecture.png){ width=55% }
 
 ### 2.1 Layer 1: Hybrid Catalog & Dense Semantic Recall
 To deliver recommendations across multiple domains (Yelp, Amazon, Goodreads), we design a unified SQLite schema. The database is populated with an extensive, highly localized catalog spanning three distinct categories:
