@@ -14,7 +14,7 @@ sleep_time: 300
 
 # NaijaBuddy: A Highly Localized, Offline-First Agentic Recommender & User-Modeling System
 
-NaijaBuddy is a 100% offline-first, containerized agentic recommendation system and review simulator tailored to the Nigerian consumer market.
+NaijaBuddy is an offline-capable, containerized agentic recommendation system and review simulator tailored to the Nigerian consumer market.
 
 It implements a two-stage **retrieve-then-rerank** pipeline over a hybrid database that combines real-world dataset subsets (Yelp, Amazon, Goodreads) with a localized catalogue of Nigerian establishments, movies, and literature. The system runs a quantized local LLM (`Qwen2.5-3B-Instruct`) and an embedding model (`BAAI/bge-small-en-v1.5`) via `llama-cpp-python` / `vLLM` and `sentence-transformers`. The **canonical multi-seed evaluation** runs entirely on a self-contained image with no cloud APIs (`Qwen2.5-3B-Instruct` GGUF via `llama-cpp-python`, or HF safetensors via `vLLM`, both batched on a single A10G).
 
@@ -24,20 +24,33 @@ It implements a two-stage **retrieve-then-rerank** pipeline over a hybrid databa
 
 ## 🚀 Quick Start (Docker)
 
-The multi-stage Dockerfile downloads the model weights, ingests the bundled dense datasets, seeds the database, and pre-synthesizes all user personas **at build time**, so the runtime image is fully self-contained and offline.
+The Dockerfile downloads the BGE-small embedding model, ingests the bundled dense datasets and seeds the database **at build time**, so the runtime image starts in seconds. LLM inference is configurable: the agent reads `VLLM_URL` at startup and routes generations through a vLLM endpoint when set, falling back to mock responses otherwise (the deployed HF Space runs in this mode against `modal_vllm_serve.py`). For a fully offline-mode runtime, see [§ Offline Mode](#-offline-mode-no-cloud-llm) below — that mode pulls Qwen2.5-3B-Q4_K_M GGUF (~2.2 GB) into the image and serves inference in-process via llama-cpp-python.
 
 ### 1. Build the image
-An internet connection is required *only* during the build, to fetch packages and model weights.
+An internet connection is required *only* during the build, to fetch packages and the embedding model.
 ```bash
 docker build -t naijabuddy .
 ```
 
 ### 2. Run the container
+
+Pointing at a vLLM endpoint (recommended; matches the canonical eval engine):
+```bash
+docker run -p 8000:8000 \
+  -e VLLM_URL=https://your-vllm-endpoint/v1 \
+  naijabuddy
+```
+
+Or stand-alone with no LLM (UI + mock responses only — useful for UI dev):
 ```bash
 docker run -p 8000:8000 naijabuddy
 ```
+
 * **Interactive UI:** `http://localhost:8000/`
 * **REST API docs:** `http://localhost:8000/docs`
+
+### 🔌 Offline Mode (no cloud LLM)
+For a fully self-contained runtime, unset `NAIJABUDDY_SKIP_QWEN` in the Dockerfile (currently `=1`) and re-build — `downloader.py` will then fetch the Q4_K_M GGUF and the agent loads it via `llama-cpp-python` at startup. No network calls at inference time. See `modal_vllm_serve.py` for the equivalent serving-side endpoint you would point `VLLM_URL` at to instead match the canonical evaluation engine (vLLM 0.21 + Qwen2.5-3B fp16 safetensors).
 
 ---
 
