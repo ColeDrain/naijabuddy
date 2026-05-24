@@ -9,7 +9,6 @@ pinned: false
 short_description: Offline-first agentic recommender for the Nigerian market
 hardware: cpu-upgrade
 suggested_hardware: cpu-upgrade
-sleep_time: 300
 ---
 
 # NaijaBuddy: A Highly Localized, Offline-Capable Agentic Recommender & User-Modeling System
