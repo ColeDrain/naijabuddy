@@ -213,10 +213,19 @@ Engines agree to within the new error bars — engine-precision change (fp16 vs
 Q4_K_M) is dominated by sampling noise.
 **Review-text reproducibility:** ROUGE-L std ≤ 0.001, Sem-BGE std ≤ 0.002 across
 the 3 seeds (Yelp / Goodreads / Amazon) — review text is highly reproducible.
-BERTScore-F1 could not be computed in this run: the synth-vLLM container had
-~85% of A10G VRAM allocated to vLLM weights + KV cache, and RoBERTa-large for
-BERTScore OOM'd with no room to load. Retained as a single-seed reference from
-the earlier llama-cpp-Q4 run (std ≤ 0.0005 there).
+BERTScore-F1 could not be computed inside this run: the synth-vLLM container
+had ~85% of A10G VRAM allocated to vLLM weights + KV cache, and RoBERTa-large
+for BERTScore OOM'd with no room to load. Backfilled by a separate Modal
+A10G pass (`modal_bertscore_backfill.py`) that reads the cached generations
++ reference reviews and computes BERTScore-F1 standalone on a GPU container
+with no vLLM contention:
+  Yelp:      0.8384 ± 0.0003
+  Goodreads: 0.8406 ± 0.0003
+  Amazon:    0.8461 ± 0.0003
+Values are ~0.003 below the prior single-seed template-llama-cpp-Q4 reference
+(0.842/0.844/0.849), consistent with vLLM-fp16 generating very slightly
+different review text than llama-cpp-Q4. Std of ±0.0003 across seeds confirms
+BERTScore is essentially seed-invariant on this scale of n.
 **Multi-k retrieval (mean ± std × 3):**
 HR@10 — hybrid 0.087±0.008 / 0.034±0.006 / 0.065±0.004 ; CF 0.094±0.006 /
 0.037±0.006 / 0.064±0.002 ; ALS 0.071±0.006 / 0.020±0.002 / 0.046±0.003.
