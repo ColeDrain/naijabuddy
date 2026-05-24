@@ -7,8 +7,8 @@ sdk: docker
 app_port: 8000
 pinned: false
 short_description: Offline-first agentic recommender for the Nigerian market
-hardware: a10g-small
-suggested_hardware: a10g-small
+hardware: cpu-upgrade
+suggested_hardware: cpu-upgrade
 sleep_time: 300
 ---
 
@@ -16,7 +16,9 @@ sleep_time: 300
 
 NaijaBuddy is a 100% offline-first, containerized agentic recommendation system and review simulator tailored to the Nigerian consumer market.
 
-It implements a two-stage **retrieve-then-rerank** pipeline over a hybrid database that combines real-world dataset subsets (Yelp, Amazon, Goodreads) with a localized catalogue of Nigerian establishments, movies, and literature. It runs a quantized local LLM (`Qwen2.5-3B-Instruct`, GGUF) and an embedding model (`BAAI/bge-small-en-v1.5`) natively in-process via `llama-cpp-python` and `sentence-transformers` — no cloud APIs, no network at runtime.
+It implements a two-stage **retrieve-then-rerank** pipeline over a hybrid database that combines real-world dataset subsets (Yelp, Amazon, Goodreads) with a localized catalogue of Nigerian establishments, movies, and literature. The system runs a quantized local LLM (`Qwen2.5-3B-Instruct`) and an embedding model (`BAAI/bge-small-en-v1.5`) via `llama-cpp-python` / `vLLM` and `sentence-transformers`. The **canonical multi-seed evaluation** runs entirely on a self-contained image with no cloud APIs (`Qwen2.5-3B-Instruct` GGUF via `llama-cpp-python`, or HF safetensors via `vLLM`, both batched on a single A10G).
+
+**Hosted demo deployment** (this Space): the UI runs on `cpu-upgrade` here and proxies inference to a Modal-hosted vLLM endpoint serving the same `Qwen2.5-3B-Instruct` safetensors used in the canonical eval. This split is a pragmatic response to HF Spaces' Docker SDK constraints (no `/dev/shm` config, no GPU at build time) — the *system* is offline-capable; the *hosted demo* trades that property for fast, paper-engine-aligned inference (~1-3s per call vs ~30-50s for CPU/partial-offload llama-cpp on the same Space hardware).
 
 ---
 
