@@ -12,7 +12,7 @@ suggested_hardware: cpu-upgrade
 sleep_time: 300
 ---
 
-# NaijaBuddy: A Highly Localized, Offline-First Agentic Recommender & User-Modeling System
+# NaijaBuddy: A Highly Localized, Offline-Capable Agentic Recommender & User-Modeling System
 
 NaijaBuddy is an offline-capable, containerized agentic recommendation system and review simulator tailored to the Nigerian consumer market.
 

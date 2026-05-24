@@ -1,4 +1,4 @@
-# NaijaBuddy: A Highly Localized, Offline-First Agentic Recommender & User Modeling System for Cross-Domain Behavioral Simulation
+# NaijaBuddy: A Highly Localized, Offline-Capable Agentic Recommender & User Modeling System for Cross-Domain Behavioral Simulation
 
 **Authors**: Team NaijaBuddy (Hackathon Submission)  
 **Affiliation**: DSN x BCT Data & AI Summit Hackathon 3.0  
