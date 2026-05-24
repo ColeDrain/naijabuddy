@@ -107,22 +107,74 @@ for src in ["solution_paper.md", "solution_paper_task_a.md", "solution_paper_tas
     print(f"  prepared {src} ({len(body)} body chars, abstract={len(abstract)}ch)")
 PY
 
-# --- Step 2: compile each via pandoc + pdflatex through the arxiv template
+# --- Step 2: pandoc -> .tex, patch longtable for twocolumn, run pdflatex
+#
+# longtable doesn't work in twocolumn mode, and pandoc 3.x emits it for
+# every markdown table. We text-rewrite the .tex output:
+#   \begin{longtable}[...]   -> \par\noindent\begin{minipage}{...}\centering\small
+#                               \\\begin{tabular}            (colspec follows)
+#   \midrule\noalign{}\endhead\bottomrule\noalign{}\endlastfoot
+#                            -> \midrule\noalign{}
+#                               (strips the longtable structural block; the
+#                               misplaced \bottomrule gets re-added below)
+#   \end{longtable}         -> \\bottomrule\\end{tabular}\\end{minipage}\par\medskip
+#
+# pdflatex runs from the repo root with --output-directory=$WORKDIR so the
+# image path `assets/diagrams/architecture.png` (relative to repo) resolves.
 for tag in solution_paper solution_paper_task_a solution_paper_task_b; do
     out="$OUTDIR/$tag.pdf"
-    rm -f "$out"
-    if pandoc "$WORKDIR/$tag.md" \
-        -o "$out" \
-        --pdf-engine=pdflatex \
+    tex="$WORKDIR/$tag.tex"
+    rm -f "$out" "$tex"
+
+    pandoc "$WORKDIR/$tag.md" \
+        -o "$tex" \
         --template="$TEMPLATE" \
         --metadata secnumdepth=-1 \
-        > /dev/null 2>&1; then
+        --standalone
+
+    python3 - "$tex" <<'PY'
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+# 1. Strip the longtable structural marker block (endhead..endlastfoot)
+#    so the inline \bottomrule disappears from between the header and
+#    the body rows.
+src = re.sub(
+    r'\\midrule\\noalign\{\}\s*\\endhead\s*\\bottomrule\\noalign\{\}\s*\\endlastfoot',
+    r'\\midrule\\noalign{}',
+    src,
+)
+# 2. Strip any stray \endhead / \endlastfoot (e.g. tables with no body header).
+src = src.replace(r'\endhead', '').replace(r'\endlastfoot', '')
+# 3. Replace \begin{longtable}[<opt>] with a centered minipage + tabular open.
+#    The colspec (the next `{...}` group) is left intact and consumed by
+#    \begin{tabular} unchanged.
+src = re.sub(
+    r'\\begin\{longtable\}\[[^\]]*\]',
+    r'\\par\\noindent\\begin{minipage}{\\linewidth}\\centering\\small\n\\begin{tabular}',
+    src,
+)
+# 4. Replace \end{longtable} with a \bottomrule + close.
+src = src.replace(
+    r'\end{longtable}',
+    '\\bottomrule\n\\end{tabular}\\end{minipage}\\par\\medskip',
+)
+p.write_text(src)
+PY
+
+    # Run pdflatex from the repo root so image paths (assets/diagrams/...)
+    # resolve. --output-directory keeps aux/log/pdf in the workdir.
+    if pdflatex -interaction=nonstopmode -output-directory="$WORKDIR" "$tex" > /dev/null 2>&1 \
+    && pdflatex -interaction=nonstopmode -output-directory="$WORKDIR" "$tex" > /dev/null 2>&1; then
+        mv "${tex%.tex}.pdf" "$out"
         size=$(stat -f%z "$out" 2>/dev/null || stat -c%s "$out")
         pages=$(pdfinfo "$out" 2>/dev/null | awk '/^Pages/ {print $2}')
         echo "  built $tag.pdf — ${size} B, ${pages} pages"
     else
-        echo "  FAILED to build $tag.pdf — re-run with the pandoc command directly to see errors:"
-        echo "  pandoc $WORKDIR/$tag.md -o $out --pdf-engine=pdflatex --template=$TEMPLATE --metadata secnumdepth=-1"
+        echo "  FAILED to build $tag.pdf — debug by running:"
+        echo "    pdflatex -interaction=nonstopmode -output-directory=$WORKDIR $tex"
+        echo "  (preserving WORKDIR for inspection)"
+        trap - EXIT
         exit 1
     fi
 done

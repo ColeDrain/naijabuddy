@@ -1,10 +1,11 @@
-% Pandoc custom template — single-column NeurIPS / arXiv-style layout.
-% Modeled after the layout convention in articles/2503.05493v2.pdf:
-% centered bold title with horizontal rules, centered author block, an
-% "Abstract" heading centered above an indented abstract body, single
-% spacing, and standard section numbering.
+% Pandoc custom template — two-column IEEE/ACM-style academic paper.
+% Targets the 4-8 page hackathon submission length cap. Title and
+% abstract span both columns, body content flows in two columns, wide
+% tables and figures use \begin{table*}/\begin{figure*} to span both.
+% Typography stays Times (mathptmx) + microtype + booktabs for the
+% expected academic look.
 
-\documentclass[$if(fontsize)$$fontsize$$else$11pt$endif$,letterpaper]{article}
+\documentclass[$if(fontsize)$$fontsize$$else$10pt$endif$,letterpaper,twocolumn]{article}
 
 % Section/TOC depth — must be set BEFORE pandoc's body-block executes
 % because pandoc emits $secnumdepth$ verbatim into a \setcounter call,
@@ -34,9 +35,12 @@
 \usepackage{amsmath,amssymb,mathtools}
 
 % ----- Layout / page geometry ----------------------------------------------
-% NeurIPS-style: 1in margins, single column, modest line height.
-\usepackage[letterpaper,margin=1in]{geometry}
-\linespread{1.05}                     % subtle breathing room, not 1.5
+% Two-column IEEE-Transactions-style: 0.65in side margins, 0.85in top/
+% bottom, modest column gap. With 10pt Times this lands ~55 chars per
+% column, matching published IEEE/ACM dual-column papers. Tighter than
+% the default for letter paper, but well within readability.
+\usepackage[letterpaper,top=0.85in,bottom=0.85in,left=0.65in,right=0.65in,columnsep=0.3in]{geometry}
+\linespread{1.0}                      % single spacing — two-column convention
 
 % ----- Sectioning ----------------------------------------------------------
 \usepackage{titlesec}
@@ -56,6 +60,10 @@
 \usepackage{longtable}
 \usepackage{tabularx}
 
+% NOTE: pandoc-emitted longtable blocks are rewritten to plain tabular
+% by the post-processing step in scripts/build_pdfs.sh (longtable does
+% not work inside a twocolumn document). See that script for details.
+
 % ----- Floats & captions ---------------------------------------------------
 \usepackage{float}
 \usepackage[font=small,labelfont=bf,format=hang,justification=centering]{caption}
@@ -67,7 +75,11 @@
 
 % ----- Page style ----------------------------------------------------------
 \pagestyle{plain}
-\setlength{\parskip}{0.5\baselineskip}
+% Tighter paragraph spacing for two-column layout — 0.3 baseline saves
+% several lines across a multi-page paper vs the 0.5 we used in single-
+% column. Indent first lines (academic convention) so we don't lose
+% visual paragraph cues to the small parskip.
+\setlength{\parskip}{0.3\baselineskip}
 \setlength{\parindent}{0pt}
 
 % ----- Unicode character mappings ------------------------------------------
@@ -124,13 +136,16 @@ $endif$
 \providecommand{\pandocbounded}[1]{#1}
 
 %% ===========================================================================
-%% TITLE BLOCK — NeurIPS / arXiv style
+%% TITLE + ABSTRACT — span both columns via \twocolumn[...] argument
 %% ===========================================================================
-% Title is set in a centered box with horizontal rules above and below
-% (the iconic NeurIPS title-page look).
+% In a two-column document the title and abstract usually run across
+% the full text width (canonical IEEE/ACM layout). \twocolumn[...]
+% accepts content to typeset full-width before column flow starts.
 
 \begin{document}
 
+\twocolumn[
+\begin{@twocolumnfalse}
 % --- Title block ---
 {\centering
 \rule{\textwidth}{0.4pt}\\[0.3em]
@@ -153,22 +168,19 @@ $endif$
 $if(date)${\small\itshape $date$\par}\vskip 1em$endif$
 \par}
 
-% --- Abstract block ---
-% Centered "Abstract" heading, indented body — matches the convention
-% used in NeurIPS/arXiv preprints. Pandoc emits \begin{abstract}...
-% only when YAML metadata sets it, so we manually wrap with the user's
-% blockquote-style "> This paper covers Task X..." if present.
-
+% --- Abstract block (centered "Abstract" heading, indented body) ---
 $if(abstract)$
 \begin{quote}
 \begin{center}{\bfseries Abstract}\end{center}
 \vskip 0.3em
-\noindent $abstract$
+\noindent\small $abstract$
 \end{quote}
 \vskip 1em
 $endif$
+\end{@twocolumnfalse}
+]
 
-% --- Body content ---
+% --- Body content (flows in two columns) ---
 $body$
 
 \end{document}
