@@ -45,6 +45,40 @@ def get_embedder():
                 EMBEDDER = SentenceTransformer("BAAI/bge-small-en-v1.5")
     return EMBEDDER
 
+
+# 5. Eager warmup at server startup. Without this, the very first /task_a
+# pays two cold-start penalties: (a) BGE-small lazy-loading ~5-10s, and
+# (b) the llama.cpp first-prompt issue (#9492) where prompt encoding runs
+# on CPU until the GPU kernels warm up — adding another 30-50s on top of
+# real inference. Doing both here moves that cost to container boot, when
+# the user isn't watching a spinner.
+@app.on_event("startup")
+def _warmup_models():
+    import time
+    print("[warmup] eager-loading BGE-small...", flush=True)
+    t0 = time.time()
+    emb = get_embedder()
+    # Force a real encode so any first-call lazy paths inside
+    # sentence-transformers are exercised.
+    _ = emb.encode("warmup probe", show_progress_bar=False)
+    print(f"[warmup] BGE-small ready ({time.time() - t0:.1f}s)", flush=True)
+
+    if agent.llm is not None:
+        print("[warmup] firing a throwaway llama-cpp generation to warm the "
+              "GPU prompt-eval kernels (llama.cpp #9492 workaround)...",
+              flush=True)
+        t0 = time.time()
+        try:
+            agent.llm("warm up", max_tokens=1, temperature=0.0)
+            print(f"[warmup] llama-cpp GPU kernels warm "
+                  f"({time.time() - t0:.1f}s)", flush=True)
+        except Exception as e:
+            print(f"[warmup] llama-cpp warmup failed (non-fatal): {e}",
+                  flush=True)
+    else:
+        print("[warmup] agent.llm is None — running in mock-fallback mode",
+              flush=True)
+
 # =====================================================================
 # REQUEST SCHEMAS (Pydantic Models)
 # =====================================================================
