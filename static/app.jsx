@@ -35,7 +35,7 @@ function Header({ tweaks, naija, setNaija, platform, setPlatform }) {
               <PlatformSelect value={platform} onChange={setPlatform}/>
               <DatasetPopover platform={platform} />
             </div>
-            <GithubLink />
+            <RepoLink />
           </div>
         </div>
       </div>
@@ -56,20 +56,21 @@ function LogoMark({ accent="emerald" }) {
   );
 }
 
-function GithubLink() {
-  const url = "https://github.com/your-team/dsn-bct-llm-agent";
+function RepoLink() {
+  // The HF Space repo holds the code, weights pointer, paper and history —
+  // canonical public artifact for the project. Visual glyph is the HF emoji
+  // (🤗) so the icon and destination agree at a glance.
+  const url = "https://huggingface.co/spaces/Vinci/naijabuddy/tree/main";
   return (
     <Tooltip text={url}>
       <a
         href={url}
         target="_blank"
         rel="noreferrer noopener"
-        aria-label="Project repository on GitHub"
-        className="w-9 h-9 grid place-items-center rounded-md text-ink hover:bg-stone1 transition-colors"
+        aria-label="Project repository on Hugging Face Spaces"
+        className="w-9 h-9 grid place-items-center rounded-md text-ink hover:bg-stone1 transition-colors text-[18px] leading-none"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M12 .5a11.5 11.5 0 0 0-3.64 22.42c.58.1.79-.25.79-.56v-2.02c-3.2.7-3.88-1.36-3.88-1.36-.52-1.32-1.28-1.67-1.28-1.67-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.74.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.04 11.04 0 0 1 5.78 0c2.21-1.5 3.18-1.18 3.18-1.18.63 1.58.24 2.75.12 3.04.74.81 1.18 1.83 1.18 3.09 0 4.42-2.7 5.4-5.27 5.68.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/>
-        </svg>
+        <span aria-hidden="true">🤗</span>
       </a>
     </Tooltip>
   );
@@ -122,7 +123,10 @@ function App() {
   // Persist persona text per-tab so it survives tab switches but reset on platform change
   const [personaA, setPersonaA] = React.useState("");
   const [personaB, setPersonaB] = React.useState("");
-  const [productA, setProductA] = React.useState(window.SAMPLE_PRODUCT.amazon);
+  // productA is owned here so CompareView ("Naija vs Neutral" side-by-side)
+  // can read the currently-selected Task A product. TaskA fires setProductA
+  // whenever its picked item changes; starts null until items load.
+  const [productA, setProductA] = React.useState(null);
   React.useEffect(() => { setPersonaA(""); setPersonaB(""); }, [platform]);
 
   const [compareOpen, setCompareOpen] = React.useState(false);
@@ -153,6 +157,7 @@ function App() {
             naija={naija}
             personaA={personaA}
             setPersonaA={setPersonaA}
+            setProductA={setProductA}
           />
         )}
         {tab === "b" && (

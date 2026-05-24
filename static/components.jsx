@@ -177,11 +177,18 @@ function PlatformSelect({ value, onChange }) {
 // new ones. Falls back to the small hardcoded set in data.jsx if the API
 // is unreachable or returns nothing.
 const _PLATFORM_LABEL = { yelp: "Yelp", amazon: "Amazon", goodreads: "Goodreads" };
+const _PLATFORM_PREFIXES = ["Yelp User", "Amazon User", "Goodreads User"];
 
 function PersonaChips({ platform, value, onPick }) {
   const [users, setUsers] = React.useState(null);   // null = not yet fetched
   const [sample, setSample] = React.useState([]);
   const [tick, setTick] = React.useState(0);        // bump to force re-sample
+  // Pool: "platform" (default — picks from the active platform's Yelp/Amazon/
+  // Goodreads users) or "nigerian" (the localized Nigerian personas seeded by
+  // data_enricher.py — they have descriptive names like "Teni (Lagos Gen-Z
+  // Influencer)" and do NOT carry a platform prefix, so we identify them as
+  // "any user whose name doesn't match any platform prefix").
+  const [pool, setPool] = React.useState("platform");
 
   // Fetch all users once on mount. Light payload (~6,000 rows × few fields).
   React.useEffect(() => {
@@ -193,11 +200,19 @@ function PersonaChips({ platform, value, onPick }) {
     return () => { alive = false; };
   }, []);
 
-  // Re-sample six personas whenever the platform changes or the user clicks Shuffle.
+  // Re-sample six personas whenever the platform, pool, or shuffle tick changes.
   React.useEffect(() => {
     if (users == null) return;
-    const prefix = _PLATFORM_LABEL[platform] || "";
-    const filtered = users.filter((u) => (u.name || "").startsWith(prefix));
+    let filtered;
+    if (pool === "nigerian") {
+      filtered = users.filter((u) => {
+        const n = u.name || "";
+        return !_PLATFORM_PREFIXES.some((p) => n.startsWith(p));
+      });
+    } else {
+      const prefix = _PLATFORM_LABEL[platform] || "";
+      filtered = users.filter((u) => (u.name || "").startsWith(prefix));
+    }
     if (filtered.length === 0) {
       setSample([]);
       return;
@@ -209,32 +224,70 @@ function PersonaChips({ platform, value, onPick }) {
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     setSample(arr.slice(-6));
-  }, [users, platform, tick]);
+  }, [users, platform, pool, tick]);
+
+  // Pool toggle — shown above the chips in both loading and loaded states so
+  // judges can switch source at any point. "Nigerian" surfaces the localized
+  // personas that the platform-prefix filter would otherwise hide.
+  const poolToggle = (
+    <div className="flex gap-1.5 text-[11px]">
+      <button type="button" className="chip"
+              data-active={pool === "platform"}
+              onClick={() => setPool("platform")}>
+        {_PLATFORM_LABEL[platform] || "Platform"} users
+      </button>
+      <button type="button" className="chip"
+              data-active={pool === "nigerian"}
+              onClick={() => setPool("nigerian")}
+              title="Localized Nigerian personas seeded over the bundled Nigerian catalogue">
+        🇳🇬 Nigerian
+      </button>
+    </div>
+  );
 
   // Still loading? Show a quiet placeholder rather than the stale hardcoded list.
   if (users == null) {
-    return <div className="text-stone4 text-xs">loading personas…</div>;
+    return (
+      <div className="space-y-2">
+        {poolToggle}
+        <div className="text-stone4 text-xs">loading personas…</div>
+      </div>
+    );
   }
 
-  // Backend reachable but no personas for this platform — fall back to the
-  // hardcoded sample list (the only place that ever happens is local dev
-  // before the DB has been seeded).
+  // Backend reachable but no personas for this filter — fall back to the
+  // hardcoded sample list (only happens in local dev before the DB is seeded,
+  // or if the Nigerian pool somehow ends up empty).
   if (sample.length === 0) {
-    const list = (window.PERSONAS || {})[platform] || [];
+    const list = pool === "nigerian"
+      ? []  // no hardcoded Nigerian fallback — empty state shown below
+      : ((window.PERSONAS || {})[platform] || []);
+    if (list.length === 0) {
+      return (
+        <div className="space-y-2">
+          {poolToggle}
+          <div className="text-stone4 text-xs">no personas match this filter yet — the catalogue may still be seeding.</div>
+        </div>
+      );
+    }
     return (
-      <div className="flex flex-wrap gap-2">
-        {list.map((p) => (
-          <button key={p} type="button" className="chip"
-                  data-active={value === p} onClick={() => onPick(p)}>
-            {p}
-          </button>
-        ))}
+      <div className="space-y-2">
+        {poolToggle}
+        <div className="flex flex-wrap gap-2">
+          {list.map((p) => (
+            <button key={p} type="button" className="chip"
+                    data-active={value === p} onClick={() => onPick(p)}>
+              {p}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
+      {poolToggle}
       <div className="flex flex-wrap gap-2">
         {sample.map((u) => (
           <button

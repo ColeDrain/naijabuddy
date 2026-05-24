@@ -70,12 +70,14 @@ COPY data /app/data
 # downloader.py is idempotent — it skips files that already exist.
 ENV HF_HOME=/app/models/hf_home \
     SENTENCE_TRANSFORMERS_HOME=/app/models/sentence_transformers \
-    HF_HUB_ENABLE_HF_TRANSFER=1
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    NAIJABUDDY_SKIP_QWEN=1
 COPY models /app/models
-# downloader.py originally downloaded both BGE-small and the Qwen GGUF; with
-# the Modal proxy architecture we only need BGE-small. The script's existence
-# checks mean the missing-GGUF case just no-ops at runtime — it's fine to
-# call without the GGUF in place.
+# NAIJABUDDY_SKIP_QWEN=1 makes downloader.py fetch only BGE-small + MiniLM
+# (small embedding models, ~200 MB). The Qwen weights (~8 GB combined) are
+# served by the Modal endpoint (see modal_vllm_serve.py); shipping them in
+# the Space image would bloat it pointlessly. Local-dev / Modal-eval runs
+# of downloader.py outside this Dockerfile leave the env var unset.
 RUN python downloader.py
 
 # Seed the catalogue (DuckDB + SQLite). Pure CPU work, no LLM calls. The

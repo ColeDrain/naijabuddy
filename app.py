@@ -181,18 +181,29 @@ def get_users():
             conn.close()
 
 @app.get("/api/items")
-def get_items(domain: str = None):
-    """Retrieves catalog items, optionally filtered by domain."""
+def get_items(domain: str = None, limit: int = None):
+    """Retrieves catalog items, optionally filtered by domain.
+
+    Pass limit=N to receive a random N-row sample (used by the UI's Task A
+    product picker — the full catalogue is ~90 K rows, too heavy to ship
+    to the browser). Without limit, returns all rows for the
+    domain/everything (backward-compatible).
+    """
     conn = None
     try:
         conn = database.get_connection()
         cursor = conn.cursor()
-        
+
+        params = []
+        sql = "SELECT id, name, category, domain, description, average_rating FROM items"
         if domain:
-            cursor.execute("SELECT id, name, category, domain, description, average_rating FROM items WHERE domain = ?", (domain,))
-        else:
-            cursor.execute("SELECT id, name, category, domain, description, average_rating FROM items")
-            
+            sql += " WHERE domain = ?"
+            params.append(domain)
+        if limit and limit > 0:
+            sql += " ORDER BY RANDOM() LIMIT ?"
+            params.append(int(limit))
+
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [
             {

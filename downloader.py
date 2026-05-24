@@ -47,6 +47,18 @@ def download_models():
     minilm = SentenceTransformer("all-MiniLM-L6-v2")
     print("MiniLM embedding model successfully cached!")
     
+    # NAIJABUDDY_SKIP_QWEN=1 short-circuits both Qwen downloads (GGUF + HF
+    # safetensors, ~8 GB combined). The deployed HF Space sets this because
+    # all LLM inference is proxied to a Modal-hosted vLLM endpoint — Qwen
+    # weights only need to be on Modal, not in the Space image. Local /
+    # eval-harness runs leave this unset to keep the offline fallback path.
+    if os.environ.get("NAIJABUDDY_SKIP_QWEN") == "1":
+        print("\n--- Skipping Qwen GGUF + safetensors (NAIJABUDDY_SKIP_QWEN=1) ---")
+        print("\n" + "=" * 60)
+        print("EMBEDDINGS CACHED (Qwen skipped — inference is proxied via VLLM_URL)")
+        print("=" * 60)
+        return
+
     # 4. Download local GGUF LLM Model
     # Retained for fallback: when VLLM_URL env var is not set, agent.py loads
     # the Q4_K_M GGUF via llama-cpp-python. Used by local dev + by Modal

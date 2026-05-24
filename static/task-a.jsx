@@ -1,36 +1,58 @@
 /* global React, Icon */
 // Task A — User Modeling: predict rating + review
 
-function TaskA({ platform, naija, personaA, setPersonaA }) {
-  const pickRandomSample = (plat) => {
-    const variants = window.SAMPLE_PRODUCTS?.[plat] || [window.SAMPLE_PRODUCT[plat]];
-    const idx = Math.floor(Math.random() * variants.length);
-    return { variant: variants[idx], idx };
-  };
-  const initSample = pickRandomSample(platform);
-  const [product, setProduct] = React.useState(initSample.variant);
-  const [sampleIdx, setSampleIdx] = React.useState(initSample.idx);
+// UI platform (lowercase) → DB domain (Capitalized, as seeded by data_enricher).
+const _DOMAIN_BY_PLATFORM = { yelp: "Yelp", amazon: "Amazon", goodreads: "Goodreads" };
+
+function TaskA({ platform, naija, personaA, setPersonaA, setProductA }) {
+  const [items, setItems] = React.useState(null);         // array | null while fetching
+  const [selectedId, setSelectedId] = React.useState(null);
+  const [shuffleTick, setShuffleTick] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [result, setResult] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [openExplain, setOpenExplain] = React.useState(false);
   const outputRef = React.useRef(null);
 
+  // Re-fetch a fresh 12-item random sample whenever the platform or shuffle
+  // bumps. /api/items?domain=X&limit=12 does the ORDER BY RANDOM() server-side
+  // so the wire payload stays small (~12 rows × ~5 short fields) even though
+  // the catalogue is ~90 K items.
   React.useEffect(() => {
-    const { variant, idx } = pickRandomSample(platform);
-    setProduct(variant);
-    setSampleIdx(idx);
-  }, [platform]);
+    const apiDomain = _DOMAIN_BY_PLATFORM[platform];
+    if (!apiDomain) { setItems([]); return; }
+    let alive = true;
+    setItems(null);
+    fetch(`/api/items?domain=${encodeURIComponent(apiDomain)}&limit=12`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        if (!alive) return;
+        const arr = Array.isArray(data) ? data : [];
+        setItems(arr);
+        // Auto-select the first item so judges can hit Generate immediately
+        // without having to also click a card.
+        setSelectedId(arr[0]?.id ?? null);
+      })
+      .catch(() => { if (alive) { setItems([]); setSelectedId(null); } });
+    return () => { alive = false; };
+  }, [platform, shuffleTick]);
 
-  // Cycle to a different sample variant for the current platform.
-  const shuffleSample = () => {
-    const variants = window.SAMPLE_PRODUCTS?.[platform] || [window.SAMPLE_PRODUCT[platform]];
-    if (variants.length <= 1) return;
-    let next = sampleIdx;
-    while (next === sampleIdx) next = Math.floor(Math.random() * variants.length);
-    setSampleIdx(next);
-    setProduct(variants[next]);
-  };
+  // Currently-selected item and the corresponding product payload sent to
+  // /task_a. The catalogue table doesn't store price, so we leave that blank;
+  // the agent only uses title/description/category/avg_rating substantively.
+  const selectedItem = (items || []).find((it) => it.id === selectedId) || null;
+  const product = selectedItem
+    ? {
+        title: selectedItem.name || "",
+        description: selectedItem.description || "",
+        category: selectedItem.category || "",
+        price: "",
+        average_rating:
+          selectedItem.average_rating != null
+            ? String(selectedItem.average_rating)
+            : "",
+      }
+    : null;
 
   // Smooth-scroll to the output region whenever loading kicks off or a fresh
   // result lands — judges click "Generate" and the result is below the fold,
@@ -43,9 +65,16 @@ function TaskA({ platform, naija, personaA, setPersonaA }) {
     window.scrollTo({ top, behavior: "smooth" });
   }, [loading, result, error]);
 
-  const setF = (k) => (e) => setProduct(p => ({...p, [k]: e.target.value }));
+  // Lift the current product up to app.jsx so the Compare view (Neutral vs
+  // Naija side-by-side) can fire its calls with the same product the user
+  // sees here. Stringify-then-parse the selectedId in the dep array so the
+  // effect only fires on real selection changes, not every re-render.
+  React.useEffect(() => {
+    if (typeof setProductA === "function") setProductA(product);
+  }, [selectedId, items, setProductA]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submit() {
+    if (!product) return;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -61,7 +90,8 @@ function TaskA({ platform, naija, personaA, setPersonaA }) {
     else setResult(r.data);
   }
 
-  const canSubmit = personaA.trim().length > 4 && product.title.trim().length > 0 && !loading;
+  const canSubmit = personaA.trim().length > 4 && !!selectedItem && !loading;
+  const showSpinner = items === null;
 
   return (
     <div className="fade-in">
@@ -76,7 +106,7 @@ function TaskA({ platform, naija, personaA, setPersonaA }) {
         <div className="space-y-2.5">
           <div className="flex items-baseline justify-between gap-3">
             <label className="field-label">User persona</label>
-            <span className="field-help">multiline · prefill with a sample below</span>
+            <span className="field-help">multiline · pick a chip below to prefill</span>
           </div>
           <textarea
             className="textarea"
@@ -93,49 +123,81 @@ function TaskA({ platform, naija, personaA, setPersonaA }) {
           </div>
         </div>
 
-        {/* Product */}
+        {/* Product — picked from the live catalogue (no hardcoded sample data) */}
         <div className="space-y-3">
           <div className="flex items-baseline justify-between gap-3">
-            <label className="field-label">Product details</label>
+            <label className="field-label">Pick a product</label>
             <div className="flex items-center gap-3">
-              <span className="field-help">sample {sampleIdx + 1}/{(window.SAMPLE_PRODUCTS?.[platform] || []).length || 1} for <span className="mono">{platform}</span></span>
+              <span className="field-help">
+                {showSpinner
+                  ? "loading…"
+                  : `${(items || []).length} from the ${_DOMAIN_BY_PLATFORM[platform]} catalogue`}
+              </span>
               <button
                 type="button"
                 className="btn btn-ghost btn-xs"
-                onClick={shuffleSample}
-                disabled={loading || (window.SAMPLE_PRODUCTS?.[platform]?.length || 1) <= 1}
+                onClick={() => setShuffleTick((t) => t + 1)}
+                disabled={loading || showSpinner}
               >Shuffle</button>
             </div>
           </div>
-          <div className="flex gap-4 items-start">
-            <ProductSlot
-              width={140}
-              height={140}
-              rounded={8}
-            />
-            <div className="grid grid-cols-12 gap-3 flex-1">
-              <div className="col-span-12">
-                <label className="input-label">Title</label>
-                <input className="input" placeholder="e.g. Anker 7-in-1 USB-C Hub" value={product.title} onChange={setF("title")} />
-              </div>
-              <div className="col-span-12">
-                <label className="input-label">Description</label>
-                <textarea className="textarea" style={{minHeight: 72}} placeholder="One or two sentences describing the product" value={product.description} onChange={setF("description")} />
-              </div>
-              <div className="col-span-6">
-                <label className="input-label">Category</label>
-                <input className="input" placeholder="e.g. Electronics › Hubs" value={product.category} onChange={setF("category")} />
-              </div>
-              <div className="col-span-3">
-                <label className="input-label">Price</label>
-                <input className="input" placeholder="USD" value={product.price} onChange={setF("price")} />
-              </div>
-              <div className="col-span-3">
-                <label className="input-label">Avg rating</label>
-                <input className="input" placeholder="0–5" value={product.average_rating} onChange={setF("average_rating")} />
+
+          {/* Item chip grid */}
+          {showSpinner ? (
+            <div className="text-stone4 text-xs">loading catalogue items…</div>
+          ) : (items || []).length === 0 ? (
+            <div className="text-stone4 text-xs">no items found for this platform.</div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {(items || []).map((it) => (
+                <button
+                  key={it.id}
+                  type="button"
+                  className="chip"
+                  data-active={selectedId === it.id}
+                  onClick={() => setSelectedId(it.id)}
+                  title={`${it.name}\n${it.category || ""}\n\n${(it.description || "").slice(0, 240)}`}
+                >
+                  {it.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Read-only details of the selected item */}
+          {selectedItem && (
+            <div className="flex gap-4 items-start pt-2">
+              <ProductSlot width={140} height={140} rounded={8} />
+              <div className="grid grid-cols-12 gap-3 flex-1">
+                <div className="col-span-12">
+                  <label className="input-label">Title</label>
+                  <div className="input" style={{minHeight: 38, display:"flex", alignItems:"center"}}>
+                    {selectedItem.name}
+                  </div>
+                </div>
+                <div className="col-span-12">
+                  <label className="input-label">Description</label>
+                  <div className="textarea" style={{minHeight: 72, whiteSpace:"pre-wrap"}}>
+                    {selectedItem.description || <span className="text-stone4">—</span>}
+                  </div>
+                </div>
+                <div className="col-span-8">
+                  <label className="input-label">Category</label>
+                  <div className="input" style={{minHeight: 38, display:"flex", alignItems:"center"}}>
+                    {selectedItem.category || <span className="text-stone4">—</span>}
+                  </div>
+                </div>
+                <div className="col-span-4">
+                  <label className="input-label">Avg rating</label>
+                  <div className="input" style={{minHeight: 38, display:"flex", alignItems:"center"}}>
+                    {selectedItem.average_rating != null
+                      ? `${Number(selectedItem.average_rating).toFixed(1)} ★`
+                      : <span className="text-stone4">—</span>}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Submit row */}
@@ -144,8 +206,7 @@ function TaskA({ platform, naija, personaA, setPersonaA }) {
           <div className="flex items-center gap-3">
             <button className="btn btn-ghost" onClick={() => {
               setPersonaA("");
-              const { variant, idx } = pickRandomSample(platform);
-              setProduct(variant); setSampleIdx(idx);
+              setShuffleTick((t) => t + 1);
               setResult(null); setError(null);
             }} disabled={loading}>Reset</button>
             <button className="btn btn-primary" onClick={submit} disabled={!canSubmit}>
