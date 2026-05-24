@@ -123,6 +123,71 @@ are written to `evaluation_results.json` and `evaluation_results.md`.
 
 ---
 
+## 🔬 Reproducing the Multi-Seed Canonical Results
+
+The paper's headline numbers (§4.2 / §4.3 / §4.4 / §4.5 / §4.8) come from a
+**3-seed (42 / 1 / 7) × n = 2,000 leave-one-out × synth-persona × vLLM-served**
+canonical evaluation. The harness is engine-portable: `eval_harness.py` takes a
+`--vllm-url` pointing at *any* OpenAI-compatible endpoint, so reproduction does
+**not** require our specific Modal setup. Pick whichever path matches your
+hardware:
+
+### Path A — Self-host vLLM on any GPU (free if you own it)
+```bash
+# Terminal 1 — start a vLLM server
+pip install vllm==0.21.0
+vllm serve Qwen/Qwen2.5-3B-Instruct --port 8000 --dtype auto
+
+# Terminal 2 — run the harness against it
+python local_data_prep.py          # one-time, regenerates dense CSVs (~10 min)
+for s in 42 1 7; do
+    python eval_harness.py --persona-mode synth --seed $s --llm-sample 2000 \
+        --cold-start --cold-sample 2000 --bertscore \
+        --vllm-url http://localhost:8000/v1
+    mv evaluation_results.json scratch/results_s${s}.json
+done
+python analysis/aggregate_seeds.py --glob 'scratch/results_s*.json' \
+    --out-md reproduction.md
+# Expect reproduction.md numbers to land within ±0.03 RMSE of paper §4.2 V2
+```
+
+### Path B — Hosted OpenAI-compatible endpoint (RunPod / Together AI / similar)
+Same as Path A, but `--vllm-url https://<your-endpoint>/v1`. Most providers
+include a free credit that covers a full 3-seed re-run. The endpoint must
+serve `Qwen/Qwen2.5-3B-Instruct` (or any other Qwen2-family model — the
+harness is model-agnostic, just disclose any swap in your write-up).
+
+### Path C — Verification-only on CPU (laptop, no GPU)
+```bash
+# Uses the in-process llama-cpp-python path (the same one this Space uses
+# without GPU). Small sample so a CPU machine finishes in minutes.
+python eval_harness.py --persona-mode synth --seed 42 --llm-sample 20
+# Finishes in ~3 min on an M-series Mac or a modern Linux CPU.
+# Numbers will be noisy at n=20 but should land in the right band.
+```
+
+### Path D — Replicate our exact Modal run (~$5 of Modal credit)
+```bash
+bash scripts/run_final_multiseed.sh
+```
+This is the path the paper's reported numbers came from. It uses
+`modal_vllm_eval.py` to spin up vLLM in a Modal A10G container per seed,
+runs the harness inside, commits each seed's cache to a persistent volume.
+Modal account required. Three parallel containers, ~$3 total, ~50 min
+wallclock for the full warm + cold-start sweep.
+
+### Auxiliary reproductions (not on the critical path)
+| Numbers | Command |
+|---|---|
+| §4.3 BERTScore-F1 multi-seed mean ± std | `modal run modal_bertscore_backfill.py` (or run `bert-score` locally over the cached generations) |
+| §4.3 LLM-as-judge Behavioural Fidelity / Contextual Relevance | `modal run modal_llm_judge.py --provider {cerebras,groq}` (free tier covers a 3-seed run) |
+| §4.8 cross-domain Books → Movies | `python cross_domain_dataset.py && python cross_domain_eval.py` — pure CPU, no LLM, no GPU |
+| §4.4 sampled-metric protocol (101 candidates) | `python eval_harness.py --candidate-pool 101 --pop-distractors --seed 42` |
+
+Every number in `numbers_integrity.md` maps to one of these commands.
+
+---
+
 ## 📦 Datasets
 
 The `data/` directory holds three pre-densified CSVs (Yelp, Goodreads, Amazon).
