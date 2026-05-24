@@ -1,3 +1,16 @@
+---
+title: NaijaBuddy
+emoji: 🇳🇬
+colorFrom: green
+colorTo: yellow
+sdk: docker
+app_port: 8000
+short_description: Offline-first Nigerian agentic recommender (Qwen2.5-3B local)
+hardware: t4-small
+suggested_hardware: t4-small
+sleep_time: 300
+---
+
 # NaijaBuddy: A Highly Localized, Offline-First Agentic Recommender & User-Modeling System
 
 NaijaBuddy is a 100% offline-first, containerized agentic recommendation system and review simulator tailored to the Nigerian consumer market.

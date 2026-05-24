@@ -20,19 +20,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv
 
 # Install dependencies into the builder's global Python path.
-# 1) CPU-only PyTorch FIRST. sentence-transformers depends on torch, and the
-#    default torch wheel drags in ~2 GB of unused NVIDIA/CUDA packages.
-#    NaijaBuddy runs CPU-only and offline, so we pin the CPU build explicitly;
-#    installing it first means sentence-transformers finds torch already
-#    satisfied and never pulls the CUDA variant.
+# 1) CUDA 12.1 PyTorch FIRST. The HF Space runs on a T4 (Compute 7.5) which
+#    supports CUDA >= 11.8; we pick cu121 because the matching llama-cpp-python
+#    CUDA wheel is well-supported and the runtime libs ship inside the wheel
+#    (no need to extend the python:3.11-slim base with the CUDA toolkit).
+#    Installing torch first means sentence-transformers finds it already
+#    satisfied and never pulls a different variant.
 RUN uv pip install --system --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu
+    torch --index-url https://download.pytorch.org/whl/cu121
 
-# 2) Everything else. llama-cpp-python is resolved from its prebuilt-wheel
-#    index when a wheel exists for the build platform — skipping a ~20-minute
-#    source compile — and falls back to compiling from source otherwise.
+# 2) Everything else. llama-cpp-python is resolved from its CUDA-12.1
+#    prebuilt-wheel index (compiled with -DGGML_CUDA=ON) so the GGUF model
+#    gets full GPU offload via agent.py's `n_gpu_layers=-1` at load time.
+#    Falls back to compiling from source if no wheel matches.
 RUN uv pip install --system --no-cache-dir \
-    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121 \
     --index-strategy unsafe-best-match \
     fastapi==0.136.1 \
     uvicorn==0.47.0 \
