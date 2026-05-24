@@ -42,7 +42,9 @@ RUN uv pip install --system --no-cache-dir \
     sentence-transformers==5.5.0 \
     huggingface-hub==1.15.0 \
     llama-cpp-python==0.3.7 \
-    duckdb==1.1.3
+    duckdb==1.1.3 \
+    datasets \
+    pandas
 
 # Copy schema, seeder, downloader, persona generator and the dense datasets.
 # data/ holds the pre-densified CSVs that data_enricher.py ingests, so it must
@@ -53,7 +55,15 @@ COPY downloader.py /app/downloader.py
 COPY fetch_real_data.py /app/fetch_real_data.py
 COPY data_enricher.py /app/data_enricher.py
 COPY generate_personas.py /app/generate_personas.py
+COPY local_data_prep.py /app/local_data_prep.py
 COPY data /app/data
+
+# Regenerate the dense Yelp / Goodreads / Amazon CSVs at build time by
+# streaming the source datasets from the Hugging Face Hub. The dense CSVs
+# are not committed (gitignored — ~600 MB combined and regenerable per
+# numbers_integrity.md). Without this step, data_enricher.py below fails
+# with FileNotFoundError on /app/data/*_dense.csv. ~10 min during build.
+RUN python local_data_prep.py
 
 # Pre-cache models. The local models/ directory is copied straight into the
 # image, so a machine that already holds the weights skips the ~2.2 GB
