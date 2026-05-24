@@ -100,7 +100,11 @@
 \DeclareUnicodeCharacter{00B1}{\ensuremath{\pm}}
 \DeclareUnicodeCharacter{00B7}{\textperiodcentered}
 \DeclareUnicodeCharacter{2013}{--}
-\DeclareUnicodeCharacter{2014}{---}
+% Em-dash (U+2014) used to map to ---; user prefers no em-dashes in
+% the rendered PDFs. Mapping it to ' - ' (hyphen with surrounding
+% spaces handled by markdown context) keeps the parenthetical pause
+% reading style without the typographic em-dash glyph.
+\DeclareUnicodeCharacter{2014}{-}
 \DeclareUnicodeCharacter{2212}{\ensuremath{-}}
 % Box-drawing for architecture diagram (code-fenced; renders as ASCII).
 \DeclareUnicodeCharacter{2500}{-}

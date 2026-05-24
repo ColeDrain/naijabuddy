@@ -136,29 +136,74 @@ for tag in solution_paper solution_paper_task_a solution_paper_task_b; do
 import re, sys, pathlib
 p = pathlib.Path(sys.argv[1])
 src = p.read_text()
-# 1. Strip the longtable structural marker block (endhead..endlastfoot)
-#    so the inline \bottomrule disappears from between the header and
-#    the body rows.
+
+# Strategy: rewrite each \begin{longtable}...\end{longtable} block. Wide
+# tables (>4 columns OR containing "Goodreads"/multi-domain rows) get
+# wrapped in \begin{table*} so they span both columns; narrow tables
+# stay inline in a single-column minipage.
+
+def rewrite_longtable(match):
+    block = match.group(0)
+    # Strip the longtable structural marker block (endhead..endlastfoot)
+    # so the inline \bottomrule disappears from between the header and
+    # the body rows.
+    block = re.sub(
+        r'\\midrule\\noalign\{\}\s*\\endhead\s*\\bottomrule\\noalign\{\}\s*\\endlastfoot',
+        r'\\midrule\\noalign{}',
+        block,
+    )
+    block = block.replace(r'\endhead', '').replace(r'\endlastfoot', '')
+
+    # Count `\centering` minipage cells in the first row to estimate
+    # column width. Pandoc emits one minipage cell per column.
+    # Crude but accurate: count `&` separators in the first body line
+    # to count columns.
+    first_row_match = re.search(r'\\toprule\\noalign\{\}\s*\n(.*?)\\\\\n\\midrule', block, re.DOTALL)
+    ncols = 0
+    if first_row_match:
+        # Number of \begin{minipage}[b] gives column count
+        ncols = first_row_match.group(1).count(r'\begin{minipage}[b]')
+        if ncols == 0:
+            # Simple text-only header — count `&` in first row
+            ncols = first_row_match.group(1).count('&') + 1
+    wide = ncols >= 5  # 5+ columns → span both columns of the paper
+
+    # Replace \begin{longtable}[<opt>] with appropriate wrapper.
+    if wide:
+        # Floating wide table spanning both columns.
+        open_macro = (
+            r'\begin{table*}[!t]\centering\small' '\n'
+            r'\begin{tabular}'
+        )
+        close_macro = r'\bottomrule' + '\n' + r'\end{tabular}' + '\n' + r'\end{table*}'
+    else:
+        # Inline single-column table.
+        open_macro = (
+            r'\par\noindent\begin{minipage}{\linewidth}\centering\small' '\n'
+            r'\begin{tabular}'
+        )
+        close_macro = (
+            r'\bottomrule' + '\n' + r'\end{tabular}\end{minipage}\par\medskip'
+        )
+    # Use a lambda for re.sub to avoid backslash-escape interpretation
+    # in the replacement string. (re.sub treats `\c`, `\b`, etc. as
+    # regex escapes in the replacement, so even raw strings don't help.)
+    block = re.sub(r'\\begin\{longtable\}\[[^\]]*\]',
+                   lambda _m: open_macro, block)
+    block = block.replace(r'\end{longtable}', close_macro)
+    return block
+
 src = re.sub(
-    r'\\midrule\\noalign\{\}\s*\\endhead\s*\\bottomrule\\noalign\{\}\s*\\endlastfoot',
-    r'\\midrule\\noalign{}',
-    src,
+    r'\\begin\{longtable\}.*?\\end\{longtable\}',
+    rewrite_longtable, src, flags=re.DOTALL,
 )
-# 2. Strip any stray \endhead / \endlastfoot (e.g. tables with no body header).
-src = src.replace(r'\endhead', '').replace(r'\endlastfoot', '')
-# 3. Replace \begin{longtable}[<opt>] with a centered minipage + tabular open.
-#    The colspec (the next `{...}` group) is left intact and consumed by
-#    \begin{tabular} unchanged.
-src = re.sub(
-    r'\\begin\{longtable\}\[[^\]]*\]',
-    r'\\par\\noindent\\begin{minipage}{\\linewidth}\\centering\\small\n\\begin{tabular}',
-    src,
-)
-# 4. Replace \end{longtable} with a \bottomrule + close.
-src = src.replace(
-    r'\end{longtable}',
-    '\\bottomrule\n\\end{tabular}\\end{minipage}\\par\\medskip',
-)
+
+# Em-dash removal: pandoc converts markdown em-dash (U+2014) to LaTeX
+# `---` (three-hyphen ligature). User wants em-dashes gone, so we
+# collapse `---` to a single hyphen. Leaves the en-dash `--` (used for
+# numeric ranges like 6.3--13%) untouched.
+src = src.replace('---', '-')
+
 p.write_text(src)
 PY
 
