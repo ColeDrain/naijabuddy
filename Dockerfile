@@ -88,22 +88,23 @@ RUN python generate_personas.py
 
 # STAGE 2: Runner stage
 #
-# Uses the CUDA runtime image (smaller than devel — no nvcc/build tools) so
-# vLLM's pre-built wheels find the CUDA shared libraries they were linked
-# against (libcudart, libcublas, libnccl, etc.) at runtime. python:3.11-slim
-# would not have these and vLLM would fail to import.
-FROM nvidia/cuda:12.9.0-runtime-ubuntu22.04 AS runner
+# Uses the CUDA *devel* image (not runtime) so the full toolchain is present:
+# nvcc, gcc, g++, plus all CUDA headers and shared libraries. vLLM 0.21
+# triggers two distinct runtime JIT compiles on first inference — FlashInfer's
+# CUDA sampler kernel (needs nvcc) and Triton's host-side driver bridge
+# (needs gcc + python-dev). The runtime image strips all of these, so any
+# code path that JIT-compiles at first use crashes mid-profile_run. The
+# devel image adds ~1.5 GB to the final image but eliminates every
+# toolchain-related runtime failure mode in one step.
+FROM nvidia/cuda:12.9.0-devel-ubuntu22.04 AS runner
 
 # Install Python 3.11 + libgomp (llama-cpp-python's libllama.so links OpenMP).
 # Match the builder's Python path so the copied site-packages resolve cleanly.
-# gcc + python3.11-dev are needed by Triton's runtime driver-bridge JIT:
-# Triton ships its GPU kernel as PTX but compiles a small C extension on first
-# kernel launch to wrap CUDA's cuModuleLoad/cuLaunchKernel. Without a C
-# compiler + Python headers, vLLM crashes mid-profile_run with
-# "Failed to find C compiler". This is the host-side compile, distinct from
-# FlashInfer's nvcc-based GPU JIT (already disabled via env var).
+# python3.11-dev is also needed by Triton's runtime driver-bridge JIT for
+# Python.h headers (cuda-devel gives us gcc + nvcc; we still need the
+# Python headers separately via apt).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-dev python3-pip libgomp1 curl gcc \
+    python3.11 python3.11-dev python3-pip libgomp1 curl \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python3
