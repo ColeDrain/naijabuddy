@@ -403,55 +403,10 @@ except Exception:
     _RATING_REVIEW_GRAMMAR = None
 
 
-class VLLMShim:
-    """
-    Drop-in replacement for llama_cpp.Llama() when the eval runs against a
-    vLLM OpenAI-compatible server (see modal_vllm_eval.py). Same callable
-    signature as the underlying Llama instance, so neither llm_score() nor
-    synthesize_persona() need to change.
-
-    Note on parity vs llama-cpp:
-      - vLLM serves Qwen2.5-3B at fp16/bf16, not Q4_K_M, so logits differ at
-        the bit level; at greedy decoding (temperature=0) most tokens still
-        match but ties may break differently. Engine difference must be
-        disclosed in the paper.
-      - `grammar=<LlamaGrammar>` is treated as a sentinel: if any grammar is
-        passed, we apply the rating+review JSON schema via guided_json.
-      - `repeat_penalty` -> vLLM's `repetition_penalty` (via extra_body)
-      - `seed` is passed through (only matters when temperature > 0)
-    """
-
-    def __init__(self, base_url):
-        from openai import OpenAI
-        self.client = OpenAI(api_key="sk-no-key-needed", base_url=base_url)
-        try:
-            self.model_id = self.client.models.list().data[0].id
-        except Exception as e:
-            raise RuntimeError(
-                f"VLLMShim could not list models from {base_url}: {e}"
-            )
-
-    def __call__(self, prompt, max_tokens=256, temperature=0.0, top_p=1.0,
-                 repeat_penalty=1.0, seed=None, stop=None, grammar=None,
-                 **kwargs):
-        extra = {}
-        if abs(repeat_penalty - 1.0) > 1e-6:
-            extra["repetition_penalty"] = repeat_penalty
-        if seed is not None:
-            extra["seed"] = seed
-        if grammar is not None:
-            extra["guided_json"] = _RATING_REVIEW_JSON_SCHEMA
-
-        r = self.client.completions.create(
-            model=self.model_id,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            stop=stop or [],
-            extra_body=extra if extra else None,
-        )
-        return {"choices": [{"text": r.choices[0].text}]}
+# VLLMShim now lives in vllm_shim.py so the live app (agent.py) and the eval
+# harness share one definition — see the module docstring there for the
+# rationale + engine-parity note.
+from vllm_shim import VLLMShim  # noqa: E402
 
 
 # SYNC: this template is identical to the prompt in agent.py -> simulate_review().

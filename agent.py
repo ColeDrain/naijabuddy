@@ -24,14 +24,49 @@ STAT_SPLIT = {
 
 class NaijaBuddyAgent:
     def __init__(self, model_path=None):
-        """Initializes the Agent. Loads the local GGUF model using llama-cpp-python if available."""
+        """Initializes the Agent.
+
+        Two inference paths, picked at startup based on the VLLM_URL env var:
+
+        (a) VLLM_URL set (e.g. http://localhost:8000/v1 — the deployed Space's
+            Docker entrypoint sets this after starting `vllm serve` as a
+            subprocess on localhost): route every self.llm(prompt, ...) call
+            through vllm_shim.VLLMShim, which speaks vLLM's OpenAI-compatible
+            HTTP API. Same engine as modal_vllm_eval.py so the live app and
+            the paper's canonical evaluation share inference precisely.
+
+        (b) VLLM_URL unset (local dev, offline reproduction, the llama-cpp
+            fallback path on a CPU-only machine): load the Q4_K_M GGUF via
+            llama-cpp-python with full GPU offload + Flash Attention when
+            available.
+
+        Either way, self.llm exposes the same callable signature, so the
+        downstream prompt sites in simulate_review*, recommend_for_user, and
+        recommend_adhoc don't care which engine produced the result.
+        """
         self.llm = None
         self.alpha = ALPHA
-        
+
+        # ---- Path (a): vLLM HTTP shim ---------------------------------------
+        vllm_url = os.getenv("VLLM_URL")
+        if vllm_url:
+            try:
+                print(f"Loading vLLM-backed LLM via VLLMShim ({vllm_url})...")
+                from vllm_shim import VLLMShim
+                self.llm = VLLMShim(vllm_url)
+                print(f"vLLM endpoint reachable; serving model "
+                      f"{self.llm.model_id!r}. Live app and paper-canonical "
+                      f"eval now share the same inference engine.")
+                return
+            except Exception as e:
+                print(f"VLLMShim init failed ({e}). Falling back to "
+                      f"llama-cpp-python + GGUF.")
+
+        # ---- Path (b): llama-cpp + GGUF (unchanged from prior behaviour) ----
         # Determine the GGUF path
         if not model_path:
             model_path = os.getenv("NAIJABUDDY_MODEL_PATH") or os.path.join(MODELS_DIR, "qwen2.5-3b-instruct-q4_k_m.gguf")
-            
+
         if os.path.exists(model_path):
             try:
                 print(f"Loading local GGUF LLM from: {model_path}...")
