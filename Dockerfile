@@ -96,8 +96,14 @@ FROM nvidia/cuda:12.9.0-runtime-ubuntu22.04 AS runner
 
 # Install Python 3.11 + libgomp (llama-cpp-python's libllama.so links OpenMP).
 # Match the builder's Python path so the copied site-packages resolve cleanly.
+# gcc + python3.11-dev are needed by Triton's runtime driver-bridge JIT:
+# Triton ships its GPU kernel as PTX but compiles a small C extension on first
+# kernel launch to wrap CUDA's cuModuleLoad/cuLaunchKernel. Without a C
+# compiler + Python headers, vLLM crashes mid-profile_run with
+# "Failed to find C compiler". This is the host-side compile, distinct from
+# FlashInfer's nvcc-based GPU JIT (already disabled via env var).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3-pip libgomp1 curl \
+    python3.11 python3.11-dev python3-pip libgomp1 curl gcc \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python3
