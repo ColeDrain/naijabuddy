@@ -118,7 +118,7 @@ gives a small, consistent lift to review-text fidelity. Retrieval helps the
 generative sub-task, not the regression sub-task.
 Artifacts: `scratch/eval_rag_results.json`, `scratch/eval_rag.log`.
 
-### 10 — n=2,000 re-evaluation  ⤷ SUPERSEDED BY #15 (multi-seed)
+### 10 — n=2,000 re-evaluation, template persona  ⤷ SUPERSEDED BY #16 (multi-seed synth-vLLM)
 Datasets regenerated at 6× scale: `python local_data_prep.py` (`LIMIT_USERS =
 2000`) streams the three HF source datasets, extracts a dense 3-core, caps each
 to its 2,000 densest users → `data/*_dense.csv`. Counts: interactions
