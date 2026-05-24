@@ -2,7 +2,7 @@
 
 // ----- Tweaks (persisted) -----
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "teamName": "Team Agent007",
+  "teamName": "Team NaijaBuddy",
   "showHeaderPattern": true,
   "headerAccent": "emerald"
 }/*EDITMODE-END*/;
