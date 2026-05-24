@@ -168,21 +168,96 @@ function PlatformSelect({ value, onChange }) {
 }
 
 // ---------- Sample persona chips ----------
+// Fetches the real synthesised personas from /api/users (built by
+// generate_personas.py at Docker-build time, stored in the seeded SQLite),
+// filters them to the current platform via the user.name prefix
+// ("Yelp User ...", "Goodreads User ...", "Amazon User ..."), and shows
+// six at random as clickable chips. Clicking loads the full persona text
+// into the textarea. A "Shuffle different personas" link re-samples six
+// new ones. Falls back to the small hardcoded set in data.jsx if the API
+// is unreachable or returns nothing.
+const _PLATFORM_LABEL = { yelp: "Yelp", amazon: "Amazon", goodreads: "Goodreads" };
+
 function PersonaChips({ platform, value, onPick }) {
-  const list = window.PERSONAS[platform] || [];
+  const [users, setUsers] = React.useState(null);   // null = not yet fetched
+  const [sample, setSample] = React.useState([]);
+  const [tick, setTick] = React.useState(0);        // bump to force re-sample
+
+  // Fetch all users once on mount. Light payload (~6,000 rows × few fields).
+  React.useEffect(() => {
+    let alive = true;
+    fetch("/api/users")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => { if (alive) setUsers(Array.isArray(data) ? data : []); })
+      .catch(() => { if (alive) setUsers([]); });
+    return () => { alive = false; };
+  }, []);
+
+  // Re-sample six personas whenever the platform changes or the user clicks Shuffle.
+  React.useEffect(() => {
+    if (users == null) return;
+    const prefix = _PLATFORM_LABEL[platform] || "";
+    const filtered = users.filter((u) => (u.name || "").startsWith(prefix));
+    if (filtered.length === 0) {
+      setSample([]);
+      return;
+    }
+    // Fisher–Yates partial shuffle, take 6.
+    const arr = filtered.slice();
+    for (let i = arr.length - 1; i > 0 && i > arr.length - 7; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    setSample(arr.slice(-6));
+  }, [users, platform, tick]);
+
+  // Still loading? Show a quiet placeholder rather than the stale hardcoded list.
+  if (users == null) {
+    return <div className="text-stone4 text-xs">loading personas…</div>;
+  }
+
+  // Backend reachable but no personas for this platform — fall back to the
+  // hardcoded sample list (the only place that ever happens is local dev
+  // before the DB has been seeded).
+  if (sample.length === 0) {
+    const list = (window.PERSONAS || {})[platform] || [];
+    return (
+      <div className="flex flex-wrap gap-2">
+        {list.map((p) => (
+          <button key={p} type="button" className="chip"
+                  data-active={value === p} onClick={() => onPick(p)}>
+            {p}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-wrap gap-2">
-      {list.map((p) => (
-        <button
-          key={p}
-          type="button"
-          className="chip"
-          data-active={value === p}
-          onClick={() => onPick(p)}
-        >
-          {p}
-        </button>
-      ))}
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {sample.map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            className="chip"
+            data-active={value === u.persona}
+            onClick={() => onPick(u.persona)}
+            title={`${u.name} · avg ${
+              u.user_mean_rating != null ? u.user_mean_rating.toFixed(1) + "★" : "—"
+            }\n\n${u.persona || ""}`.slice(0, 400)}
+          >
+            {u.name}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="text-[11px] text-stone4 hover:text-ink underline underline-offset-2"
+        onClick={() => setTick((t) => t + 1)}
+      >
+        Shuffle different personas
+      </button>
     </div>
   );
 }

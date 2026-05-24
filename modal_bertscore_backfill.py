@@ -32,7 +32,8 @@ def _download_roberta():
 
 
 image = (
-    modal.Image.debian_slim(python_version="3.11")
+    modal.Image.from_registry("nvidia/cuda:12.2.0-devel-ubuntu22.04",
+                              add_python="3.11")
     .pip_install("bert-score", "torch", "transformers", "pandas")
     .run_function(_download_roberta)
     .add_local_dir(
@@ -50,11 +51,12 @@ image = (
 
 @app.function(
     image=image,
+    gpu="a10g",
     volumes={"/cache": cache_volume},
-    cpu=4.0, memory=8192, timeout=1800,
+    cpu=2.0, memory=8192, timeout=1800,
 )
 def backfill():
-    """CPU-only BERTScore-F1 over the synth-vLLM cached reviews."""
+    """GPU BERTScore-F1 over the synth-vLLM cached reviews (~30x faster than CPU)."""
     import json
     import pandas as pd
     from bert_score import score as bs_score
