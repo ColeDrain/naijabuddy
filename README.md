@@ -229,3 +229,31 @@ showcase personas:
 1. **Kunle (VI Tech Bro)** — Victoria Island software engineer; clean aesthetics, fast internet, startup jargon.
 2. **Mr. Okeke (Strict Dad)** — conservative retired headmaster; price-sensitive, highly critical, values quiet and moral substance.
 3. **Teni (Lagos Gen-Z Influencer)** — fashion and lifestyle creator; obsessed with aesthetic, instagrammable spots and social events.
+
+---
+
+## 📚 Open-Source Frameworks & Models Used
+
+Per the competition's "use of public pre-trained models and open-source frameworks with appropriate disclosure" clause, NaijaBuddy builds on the following open work:
+
+**Models** (all pulled from Hugging Face Hub, run locally):
+- **Qwen2.5-3B-Instruct** (Alibaba Cloud, Apache 2.0) — the local reranker / review-generator LLM, in Q4_K_M GGUF quantization
+- **BAAI/bge-small-en-v1.5** (BAAI, MIT) — the dense semantic retrieval embedder
+- **RoBERTa-large** (Facebook AI, MIT) — backbone for the canonical BERTScore-F1 metric in §4.3
+
+**Inference engines:**
+- **llama-cpp-python** (Andrei Betlen et al., MIT) — the in-process GGUF runtime used by `agent.py` for the live web demo, also the default path of `eval_harness.py`
+- **vLLM 0.21** (vLLM project, Apache 2.0) — used for the multi-seed canonical evaluation on Modal A10G via `modal_vllm_eval.py`; PagedAttention + continuous batching
+
+**Recommendation / metric libraries:**
+- **implicit** (Ben Frederickson, MIT) — Cython/OpenMP ALS matrix factorization (§4.4)
+- **sentence-transformers** (UKPLab, Apache 2.0) — BGE-small inference wrapper
+- **bert-score** (Tianyi Zhang et al., MIT) — canonical BERTScore-F1 implementation (§4.3)
+- **rouge-score** (Google Research, Apache 2.0) — ROUGE-L for review-text overlap
+
+**App framework:**
+- **FastAPI** (Sebastián Ramírez, MIT) — REST API + static-file server
+- **React** + **TailwindCSS** + **Babel** (Meta / Tailwind Labs / Babel, all MIT) — the vendored web UI, all served offline
+- **DuckDB** (DuckDB Labs, MIT) — local catalogue + persona storage
+
+All listed components were used under their public licenses; no proprietary or paid APIs are involved in the deployed system.
