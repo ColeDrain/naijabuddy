@@ -21,6 +21,20 @@ It implements a two-stage **retrieve-then-rerank** pipeline over a hybrid databa
 
 ---
 
+## 📄 Solution Papers
+
+This repo ships **three** papers covering the same NaijaBuddy artefact at different scopes — the unified paper is the complete architectural and evaluation reference; the two task-focused papers exist because the DSN×BCT submission form is structured around per-task submissions:
+
+| File | Scope | Purpose |
+| :--- | :--- | :--- |
+| [`solution_paper.md`](solution_paper.md) | Both tasks, full system | Complete reference: architecture, calibration, all §4 results (rating + review + retrieval + cold-start + cross-domain) |
+| [`solution_paper_task_a.md`](solution_paper_task_a.md) | Task A only | User Modeling submission: §4 focuses on RMSE/calibration, review quality (BERTScore/ROUGE/BGE), cold-start, persona ablation, RAG, cross-domain transfer |
+| [`solution_paper_task_b.md`](solution_paper_task_b.md) | Task B only | Recommendation submission: §4 focuses on multi-cutoff HR/NDCG retrieval, hybrid vs ALS vs CF, persona-on-retrieval ablation, cold-start retrieval |
+
+The Task A and Task B papers share §1 (intro), §2 (architecture), §3 (cultural context), §5–7 (related work / future / conclusion); §4 (experiments) is the task-relevant subset of the unified paper. Per the brief's *"Two tasks, one ambition"* framing, the same agent class (`NaijaBuddyAgent`) and the same Docker image serve both tasks — `simulate_review_adhoc` for Task A and `recommend_adhoc` for Task B.
+
+---
+
 ## 🚀 Quick Start (Docker)
 
 The Dockerfile downloads the BGE-small embedding model, ingests the bundled dense datasets and seeds the database **at build time**, so the runtime image starts in seconds. LLM inference is configurable: the agent reads `VLLM_URL` at startup and routes generations through a vLLM endpoint when set, falling back to mock responses otherwise (the deployed HF Space runs in this mode against `modal_vllm_serve.py`). For a fully offline-mode runtime, see [§ Offline Mode](#-offline-mode-no-cloud-llm) below — that mode pulls Qwen2.5-3B-Q4_K_M GGUF (~2.2 GB) into the image and serves inference in-process via llama-cpp-python.
